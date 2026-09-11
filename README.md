@@ -14,7 +14,7 @@ Built to the [SRS v1.0](#) — see requirement tags (FR-x, BC-x, SEC-x) in the c
 | App (UI + API) | **Next.js 15** (App Router, TypeScript) |
 | Persistence | **MongoDB Atlas** (Mongoose) |
 | Trust layer | **Polygon Amoy** via **Alchemy** — anchoring only, **server-side** (no browser web3, DC-2) |
-| Meter data | **Flask** simulator (`/simulator`) emitting the §7.3 ingestion contract |
+| Meter data | **In-process Node simulator** (control panel at `/smart`) emitting the §7.3 ingestion contract |
 | Intelligence | **Rule engine** (pricing §9.1, detection §9.2) behind swappable interfaces → Groq later |
 
 ## Project layout
@@ -32,9 +32,11 @@ src/
     fraud/             detector.ts (§9.2 rules R-01..R-08)
     blockchain/        adapter.ts (§8 anchor/verify), hash.ts (canonical sha256)
     audit.ts           append-only audit log
+    services/
+    simulator/         engine.ts — in-process bidirectional smart-meter simulator
+    ingest/            ingestReadings.ts — shared reading-ingestion core
 data/gandhinagar.json  shared demo topology (seed + simulator read this)
 scripts/seed.ts        populate MongoDB from the manifest
-simulator/             Flask bidirectional smart-meter service
 ```
 
 ## Setup
@@ -68,9 +70,15 @@ npm run dev            # http://localhost:3000
 
 ### 4. Run the simulator
 
-See [`simulator/README.md`](simulator/README.md). In short: `pip install -r
-simulator/requirements.txt`, set a matching `SIM_SERVICE_TOKEN`, `python simulator/app.py`,
-then `POST /start`.
+The simulator now runs inside the Next.js server — no separate process. Open the
+control panel at **http://localhost:3000/smart** and **Start** any meter to stream
+readings for that meter only (its owner's dashboard updates live). Each meter has
+its own Start/Stop; use *Push one tick* for a single manual batch and the fault
+panel (Appendix B) to arm fraud anomalies.
+
+Control API (same-origin): `GET /api/smart/state`, `POST /api/smart/meter`
+`{meterCode, running}` (or `{all, running}`), `POST /api/smart/tick`,
+`POST /api/smart/fault` `{meterCode, fault}`.
 
 ## API surface (§11)
 
@@ -85,11 +93,11 @@ then `POST /start`.
 
 ## Demo flow (Appendix C)
 
-1. `npm run seed`, `npm run dev`, start the simulator → readings stream in, feeder load/congestion update.
+1. `npm run seed`, `npm run dev`, start a meter at `/smart` → readings stream in, feeder load/congestion update.
 2. Log in as a prosumer → `POST /api/offers` to list midday surplus.
 3. Log in as a consumer → `POST /api/bids`; matching settles trades in credits, each anchored on Polygon.
 4. Prosumer `POST /api/rec/request` → certificate body approves from the issuance queue → REC issued + anchored.
-5. Arm a simulator fault (Appendix B) → fraud rules raise alerts.
+5. Arm a fault from `/smart` (Appendix B) → fraud rules raise alerts.
 6. Regulator triages the alert and revokes the REC; auditor verifies provenance against the chain.
 
 ## What's scaffolded vs. stubbed
