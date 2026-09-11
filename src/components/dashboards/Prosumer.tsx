@@ -57,6 +57,7 @@ const TABS = [
 
 export default function ProsumerDashboard({ feederId }: { feederId: string | null }) {
   const { show, node } = useToast();
+  const me = useApi<{ _id: string }>("/api/me", 30000);
   const meters = useApi<MetersResp>("/api/meters/mine", 5000);
   const trades = useApi<Trade[]>("/api/trades/mine", 5000);
   const recs = useApi<Rec[]>("/api/rec/mine", 5000);
@@ -170,7 +171,7 @@ export default function ProsumerDashboard({ feederId }: { feederId: string | nul
           {active === "sell" && <SellTerminal feederId={feederId} />}
 
           {active === "desk" && (
-            <TradingDesk trades={trades.data ?? []} clearingPrice={pricing?.clearingPrice} />
+            <TradingDesk trades={trades.data ?? []} clearingPrice={pricing?.clearingPrice} myUserId={me.data?._id ?? null} />
           )}
 
           {active === "recs" && (

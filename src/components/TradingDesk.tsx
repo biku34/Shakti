@@ -13,7 +13,11 @@ export type DeskTrade = {
   anchorTxHash: string | null;
   settledAt: string | null;
   createdAt?: string | null;
+  buyerId: string;
+  sellerId: string;
 };
+
+type Side = "sell" | "buy";
 
 function ts(x: DeskTrade): number {
   const s = x.settledAt ?? x.createdAt;
@@ -42,49 +46,57 @@ type FilterId = "all" | "settled" | "inflight" | "failed";
 export default function TradingDesk({
   trades,
   clearingPrice,
+  myUserId,
 }: {
   trades: DeskTrade[];
   clearingPrice?: number;
+  myUserId: string | null;
 }) {
   const [filter, setFilter] = useState<FilterId>("all");
 
   const m = useMemo(() => {
+    // Side is relative to the logged-in trader: they're the seller on a sell,
+    // the buyer on a buy. Credits flow in on a sell, out on a buy.
+    const sideOf = (x: DeskTrade): Side => (x.sellerId === myUserId ? "sell" : "buy");
+    const signed = (x: DeskTrade): number => (sideOf(x) === "sell" ? x.totalCredits : -x.totalCredits);
+
     const all = [...trades].sort((a, b) => ts(b) - ts(a));
     const settled = all.filter((x) => x.status === "settled");
     const inflight = all.filter((x) => x.status === "matched");
     const failed = all.filter((x) => x.status === "failed");
 
-    // Settled in chronological order → equity + volume curves.
+    // Settled in chronological order → equity (net P&L) + fill curves.
     const chrono = [...settled].sort((a, b) => ts(a) - ts(b));
     const equity: number[] = [];
-    const volume: number[] = [];
     const fillPrices: number[] = [];
     const fillLabels: string[] = [];
-    let cumCr = 0;
-    let cumKwh = 0;
+    let cumNet = 0;
     for (const x of chrono) {
-      cumCr += x.totalCredits;
-      cumKwh += x.quantityKwh;
-      equity.push(Number(cumCr.toFixed(2)));
-      volume.push(Number(cumKwh.toFixed(2)));
+      cumNet += signed(x);
+      equity.push(Number(cumNet.toFixed(2)));
       fillPrices.push(Number(x.pricePerKwh.toFixed(2)));
       fillLabels.push(hhmm(ts(x)));
     }
 
-    const energySold = cumKwh;
-    const totalEarned = cumCr;
-    const vwap = energySold > 0 ? totalEarned / energySold : 0;
-    const bestFill = settled.length ? Math.max(...settled.map((x) => x.pricePerKwh)) : 0;
-    const inflightValue = inflight.reduce((s, x) => s + x.totalCredits, 0);
+    // Sell-side aggregates (earnings, energy sold, VWAP are seller metrics).
+    const sells = settled.filter((x) => sideOf(x) === "sell");
+    const buys = settled.filter((x) => sideOf(x) === "buy");
+    const energySold = sells.reduce((s, x) => s + x.quantityKwh, 0);
+    const sellEarned = sells.reduce((s, x) => s + x.totalCredits, 0);
+    const spent = buys.reduce((s, x) => s + x.totalCredits, 0);
+    const netEarned = sellEarned - spent;
+    const vwap = energySold > 0 ? sellEarned / energySold : 0;
+    const bestFill = sells.length ? Math.max(...sells.map((x) => x.pricePerKwh)) : 0;
+    const inflightValue = inflight.reduce((s, x) => s + signed(x), 0);
     const fillRate = all.length ? settled.length / all.length : 0;
-    const todayEarned = settled.filter((x) => isToday(ts(x))).reduce((s, x) => s + x.totalCredits, 0);
+    const todayNet = settled.filter((x) => isToday(ts(x))).reduce((s, x) => s + signed(x), 0);
 
     return {
-      all, settled, inflight, failed,
-      equity, volume, fillPrices, fillLabels,
-      energySold, totalEarned, vwap, bestFill, inflightValue, fillRate, todayEarned,
+      all, settled, inflight, failed, sideOf,
+      equity, fillPrices, fillLabels,
+      energySold, sellEarned, spent, netEarned, vwap, bestFill, inflightValue, fillRate, todayNet,
     };
-  }, [trades]);
+  }, [trades, myUserId]);
 
   const rows =
     filter === "settled" ? m.settled :
@@ -108,26 +120,30 @@ export default function TradingDesk({
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <div className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">
-              Realized earnings
+              Net realized P&amp;L
             </div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="text-4xl font-bold tabular-nums text-neutral-900">
-                {m.totalEarned.toFixed(2)}
+                {m.netEarned >= 0 ? m.netEarned.toFixed(2) : `−${Math.abs(m.netEarned).toFixed(2)}`}
               </span>
               <span className="text-sm font-medium text-neutral-400">cr</span>
               <span
                 className={`ml-1 text-sm font-semibold tabular-nums ${
-                  m.todayEarned > 0 ? "text-green-600" : "text-neutral-400"
+                  m.todayNet > 0 ? "text-green-600" : m.todayNet < 0 ? "text-red-500" : "text-neutral-400"
                 }`}
               >
-                {m.todayEarned > 0 ? `▲ +${m.todayEarned.toFixed(2)} today` : "— flat today"}
+                {m.todayNet > 0
+                  ? `▲ +${m.todayNet.toFixed(2)} today`
+                  : m.todayNet < 0
+                  ? `▼ −${Math.abs(m.todayNet).toFixed(2)} today`
+                  : "— flat today"}
               </span>
             </div>
           </div>
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
             <HeroStat label="Energy sold" value={`${m.energySold.toFixed(2)}`} unit="kWh" />
-            <HeroStat label="Avg fill (VWAP)" value={m.vwap.toFixed(3)} unit="cr/kWh" />
-            <HeroStat label="Best fill" value={m.bestFill.toFixed(2)} unit="cr/kWh" />
+            <HeroStat label="Avg sell (VWAP)" value={m.vwap.toFixed(3)} unit="cr/kWh" />
+            <HeroStat label="Best sell" value={m.bestFill.toFixed(2)} unit="cr/kWh" />
             <HeroStat label="Fill rate" value={`${(m.fillRate * 100).toFixed(0)}`} unit="%" />
           </div>
         </div>
@@ -135,9 +151,9 @@ export default function TradingDesk({
 
       {/* ── KPI ticker ─────────────────────────────────────────────── */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiTile label="Total earned" value={m.totalEarned} unit="cr" color="#16a34a" spark={m.equity} sparkColor="#16a34a" />
-        <KpiTile label="Volume sold" value={m.energySold} unit="kWh" color="#2b6cb0" spark={m.volume} sparkColor="#2b6cb0" />
-        <KpiTile label="Avg realized price" value={m.vwap} unit="cr/kWh" color="#7c3aed" decimals={3} spark={m.fillPrices} sparkColor="#7c3aed" />
+        <KpiTile label="Net earned" value={m.netEarned} unit="cr" color="#16a34a" spark={m.equity} sparkColor="#16a34a" />
+        <KpiTile label="Volume sold" value={m.energySold} unit="kWh" color="#2b6cb0" />
+        <KpiTile label="Avg sell price" value={m.vwap} unit="cr/kWh" color="#7c3aed" decimals={3} spark={m.fillPrices} sparkColor="#7c3aed" />
         <KpiTile label="In-flight value" value={m.inflightValue} unit="cr" color="#d69e2e" decimals={2} />
       </div>
 
@@ -145,7 +161,7 @@ export default function TradingDesk({
       <div className="grid gap-6 xl:grid-cols-2">
         <Card
           title="Equity curve"
-          actions={<span className="hidden text-xs text-neutral-400 sm:inline">cumulative credits · {m.settled.length} fills</span>}
+          actions={<span className="hidden text-xs text-neutral-400 sm:inline">cumulative net · {m.settled.length} fills</span>}
         >
           {m.equity.length < 2 ? (
             <DeskWait note="Your cumulative earnings will chart here as trades settle." />
@@ -206,21 +222,33 @@ export default function TradingDesk({
           empty="No fills in this view yet."
         >
           {rows.map((x) => {
+            const side = m.sideOf(x);
+            const isSell = side === "sell";
             const spread = clearingPrice != null ? x.pricePerKwh - clearingPrice : null;
+            // A favorable trade is selling above market or buying below it.
+            const favorable = spread == null ? null : isSell ? spread >= 0 : spread <= 0;
             return (
               <tr key={x._id}>
                 <Td className="text-xs text-neutral-500">{hhmm(ts(x))}</Td>
                 <Td>
-                  <span className="rounded px-1.5 py-0.5 text-xs font-semibold text-green-700 bg-green-50">SELL</span>
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
+                      isSell ? "text-green-700 bg-green-50" : "text-blue-700 bg-blue-50"
+                    }`}
+                  >
+                    {isSell ? "SELL" : "BUY"}
+                  </span>
                 </Td>
                 <Td className="tabular-nums">{x.quantityKwh.toFixed(2)}</Td>
                 <Td className="tabular-nums">{x.pricePerKwh.toFixed(2)}</Td>
-                <Td className="tabular-nums font-medium text-leaf">+{x.totalCredits.toFixed(2)}</Td>
+                <Td className={`tabular-nums font-medium ${isSell ? "text-leaf" : "text-red-500"}`}>
+                  {isSell ? "+" : "−"}{x.totalCredits.toFixed(2)}
+                </Td>
                 <Td className="tabular-nums text-xs">
                   {spread == null || Math.abs(spread) < 1e-9 ? (
                     <span className="text-neutral-400">—</span>
                   ) : (
-                    <span className={spread >= 0 ? "text-green-600" : "text-red-500"}>
+                    <span className={favorable ? "text-green-600" : "text-red-500"}>
                       {spread >= 0 ? "▲" : "▼"} {Math.abs(spread).toFixed(2)}
                     </span>
                   )}
