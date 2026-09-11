@@ -7,8 +7,8 @@ import { api } from "@/lib/client";
 import { Btn, ErrorNote, Field, inputClass } from "@/components/ui";
 
 const DEMO = [
-  { email: "prosumer.011.0@demo.reip", role: "Prosumer" },
-  { email: "consumer.011.0@demo.reip", role: "Consumer" },
+  { email: "rahul@demo.reip", role: "Rahul · Trader" },
+  { email: "ramesh@demo.reip", role: "Ramesh · Trader" },
   { email: "utility@demo.reip", role: "Utility" },
   { email: "regulator@demo.reip", role: "Regulator" },
   { email: "cert@demo.reip", role: "Certificate Body" },

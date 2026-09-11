@@ -9,8 +9,7 @@ import { Btn, ErrorNote, Field, inputClass, useApi } from "@/components/ui";
 type Feeder = { _id: string; code: string; name: string };
 
 const ROLES = [
-  { key: "prosumer", label: "Prosumer (rooftop solar, sells surplus)" },
-  { key: "consumer", label: "Consumer (buys local energy)" },
+  { key: "prosumer", label: "Trader (buy & sell energy)" },
   { key: "utility", label: "Utility Company" },
   { key: "regulator", label: "Regulator" },
   { key: "certificate_body", label: "Certificate Body" },
@@ -24,7 +23,7 @@ export default function RegisterPage() {
     name: "",
     email: "",
     password: "",
-    role: "consumer",
+    role: "prosumer",
     feederId: "",
   });
   const [error, setError] = useState<string | null>(null);

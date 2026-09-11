@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source of truth for demo topology (Appendix A). Consumed by scripts/seed.ts (populates MongoDB) AND simulator/ (emits readings for these meter codes). Keep meter codes/capacities identical on both sides.",
+  "_comment": "Single source of truth for demo topology. Consumed by scripts/seed.ts (populates MongoDB) AND simulator/ (emits readings for these meter codes). Trading is unified onto the prosumer dashboard: Rahul and Ramesh are two trader profiles on the same feeder who buy and sell energy from each other.",
   "demoPassword": "password123",
   "globalUsers": [
     { "role": "utility", "name": "Gandhinagar Utility", "email": "utility@demo.reip" },
@@ -15,16 +15,10 @@
       "lng": 72.6502,
       "capacityKw": 500,
       "prosumers": [
-        { "email": "prosumer.011.0@demo.reip", "name": "Prosumer 11-0", "meterCode": "GNR-M-00001", "solarCapacityKw": 5 },
-        { "email": "prosumer.011.1@demo.reip", "name": "Prosumer 11-1", "meterCode": "GNR-M-00002", "solarCapacityKw": 3 },
-        { "email": "prosumer.011.2@demo.reip", "name": "Prosumer 11-2", "meterCode": "GNR-M-00003", "solarCapacityKw": 7 },
-        { "email": "prosumer.011.3@demo.reip", "name": "Prosumer 11-3", "meterCode": "GNR-M-00004", "solarCapacityKw": 4 }
+        { "email": "rahul@demo.reip", "name": "Rahul", "meterCode": "GNR-M-00001", "solarCapacityKw": 5 },
+        { "email": "ramesh@demo.reip", "name": "Ramesh", "meterCode": "GNR-M-00002", "solarCapacityKw": 6 }
       ],
-      "consumers": [
-        { "email": "consumer.011.0@demo.reip", "name": "Consumer 11-0" },
-        { "email": "consumer.011.1@demo.reip", "name": "Consumer 11-1" },
-        { "email": "consumer.011.2@demo.reip", "name": "Consumer 11-2" }
-      ]
+      "consumers": []
     },
     {
       "code": "GNR-F-021",
@@ -32,16 +26,8 @@
       "lat": 23.2035,
       "lng": 72.6421,
       "capacityKw": 400,
-      "prosumers": [
-        { "email": "prosumer.021.0@demo.reip", "name": "Prosumer 21-0", "meterCode": "GNR-M-00005", "solarCapacityKw": 6 },
-        { "email": "prosumer.021.1@demo.reip", "name": "Prosumer 21-1", "meterCode": "GNR-M-00006", "solarCapacityKw": 4 },
-        { "email": "prosumer.021.2@demo.reip", "name": "Prosumer 21-2", "meterCode": "GNR-M-00007", "solarCapacityKw": 8 }
-      ],
-      "consumers": [
-        { "email": "consumer.021.0@demo.reip", "name": "Consumer 21-0" },
-        { "email": "consumer.021.1@demo.reip", "name": "Consumer 21-1" },
-        { "email": "consumer.021.2@demo.reip", "name": "Consumer 21-2" }
-      ]
+      "prosumers": [],
+      "consumers": []
     },
     {
       "code": "GNR-F-028",
@@ -49,15 +35,8 @@
       "lat": 23.1901,
       "lng": 72.6289,
       "capacityKw": 450,
-      "prosumers": [
-        { "email": "prosumer.028.0@demo.reip", "name": "Prosumer 28-0", "meterCode": "GNR-M-00008", "solarCapacityKw": 5 },
-        { "email": "prosumer.028.1@demo.reip", "name": "Prosumer 28-1", "meterCode": "GNR-M-00009", "solarCapacityKw": 3 },
-        { "email": "prosumer.028.2@demo.reip", "name": "Prosumer 28-2", "meterCode": "GNR-M-00010", "solarCapacityKw": 6 }
-      ],
-      "consumers": [
-        { "email": "consumer.028.0@demo.reip", "name": "Consumer 28-0" },
-        { "email": "consumer.028.1@demo.reip", "name": "Consumer 28-1" }
-      ]
+      "prosumers": [],
+      "consumers": []
     }
   ]
 }

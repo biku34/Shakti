@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
-import { useApi, Badge } from "@/components/ui";
+import { useApi } from "@/components/ui";
 import type { Role } from "@/lib/roles";
 
 import ProsumerDashboard from "@/components/dashboards/Prosumer";
@@ -20,19 +20,23 @@ type Me = {
   feederId: string | null;
 };
 
-const ROLE_LABEL: Record<Role, string> = {
-  prosumer: "Prosumer",
-  consumer: "Consumer",
-  utility: "Utility",
-  regulator: "Regulator",
-  certificate_body: "Certificate Body",
-  auditor: "Auditor",
+const ROLE_META: Record<Role, { label: string; accent: string; ring: string }> = {
+  prosumer: { label: "Prosumer", accent: "#f5a623", ring: "ring-amber-200" },
+  consumer: { label: "Consumer", accent: "#2b6cb0", ring: "ring-blue-200" },
+  utility: { label: "Utility", accent: "#0f766e", ring: "ring-teal-200" },
+  regulator: { label: "Regulator", accent: "#7c3aed", ring: "ring-purple-200" },
+  certificate_body: { label: "Certificate Body", accent: "#16a34a", ring: "ring-green-200" },
+  auditor: { label: "Auditor", accent: "#334155", ring: "ring-slate-300" },
 };
+
+type MeterProfile = { meters: { code: string }[] };
 
 export default function DashboardShell({ role, feederId }: { role: Role; feederId: string | null }) {
   const router = useRouter();
-  // Poll /api/me so the credit balance stays live after trades settle.
   const { data: me } = useApi<Me>("/api/me", 5000);
+  const { data: meterProfile } = useApi<MeterProfile>(role === "prosumer" ? "/api/meters/mine" : null, 10000);
+  const meta = ROLE_META[role];
+  const meterCode = meterProfile?.meters?.[0]?.code ?? null;
 
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
@@ -40,30 +44,58 @@ export default function DashboardShell({ role, feederId }: { role: Role; feederI
   }
 
   const showCredits = role === "prosumer" || role === "consumer";
+  const initial = (me?.name ?? "?").charAt(0).toUpperCase();
 
   return (
-    <div className="min-h-screen bg-neutral-50">
-      <header className="sticky top-0 z-10 border-b border-neutral-200 bg-white/80 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
+    <div className="min-h-screen bg-[#f7f8fa] text-neutral-900">
+      <header className="sticky top-0 z-20 border-b border-neutral-200/80 bg-white/85 backdrop-blur">
+        <div className="flex w-full items-center justify-between gap-4 px-5 py-2.5 lg:px-8">
           <div className="flex items-center gap-3">
-            <span className="text-lg font-bold text-leaf">⚡ REIP</span>
-            <Badge tone="green">{ROLE_LABEL[role]}</Badge>
-          </div>
-          <div className="flex items-center gap-4 text-sm">
-            {showCredits && me && (
-              <span className="tabular-nums text-neutral-600">
-                Credits: <strong className="text-neutral-900">{me.creditBalance.toFixed(2)}</strong>
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-leaf text-white shadow-sm">⚡</span>
+            <div className="leading-tight">
+              <div className="text-sm font-bold tracking-tight">REIP</div>
+              <div className="text-[11px] text-neutral-400">Renewable Energy Intelligence</div>
+            </div>
+            <span
+              className="ml-2 rounded-full px-2.5 py-0.5 text-xs font-semibold text-white"
+              style={{ backgroundColor: meta.accent }}
+            >
+              {meta.label}
+            </span>
+            {meterCode && (
+              <span className="hidden items-center gap-1.5 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs text-neutral-600 sm:inline-flex">
+                <span className="text-neutral-400">Meter</span>
+                <span className="font-mono font-medium text-neutral-800">{meterCode}</span>
               </span>
             )}
-            <span className="text-neutral-500">{me?.name ?? "…"}</span>
-            <button onClick={logout} className="rounded-lg border border-neutral-300 px-3 py-1 text-neutral-700 hover:bg-neutral-50">
+          </div>
+
+          <div className="flex items-center gap-3 text-sm">
+            {showCredits && (
+              <span className="hidden rounded-full bg-neutral-100 px-3 py-1.5 tabular-nums text-neutral-600 sm:inline-block">
+                Credits <strong className="ml-1 text-neutral-900">{me ? me.creditBalance.toFixed(2) : "…"}</strong>
+              </span>
+            )}
+            <div className="flex items-center gap-2">
+              <span
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold text-white ring-2 ${meta.ring}`}
+                style={{ backgroundColor: meta.accent }}
+              >
+                {initial}
+              </span>
+              <span className="hidden text-neutral-600 md:inline">{me?.name ?? "…"}</span>
+            </div>
+            <button
+              onClick={logout}
+              className="rounded-lg border border-neutral-300 px-3 py-1.5 text-neutral-600 transition hover:bg-neutral-50"
+            >
               Sign out
             </button>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-6 py-8">
+      <main className="w-full px-5 py-6 lg:px-8">
         <Dashboard role={role} feederId={feederId} />
       </main>
     </div>

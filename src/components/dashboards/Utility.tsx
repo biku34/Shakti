@@ -1,6 +1,17 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { Card, Stat, Table, Td, StatusBadge, Tabs, useApi } from "@/components/ui";
+
+// Leaflet touches `window`, so load the map client-side only (no SSR).
+const CongestionMap = dynamic(() => import("@/components/CongestionMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[520px] items-center justify-center rounded-xl border border-neutral-200 text-sm text-neutral-400">
+      Loading map…
+    </div>
+  ),
+});
 
 type Feeder = {
   _id: string;
@@ -9,6 +20,7 @@ type Feeder = {
   capacityKw: number;
   currentLoadKw: number;
   congestionLevel: string;
+  location: { lat: number; lng: number };
 };
 type Settlement = { feederId: string; trades: number; energyKwh: number; credits: number };
 
@@ -20,6 +32,10 @@ const TABS = [
 ];
 
 const BAR_COLOR: Record<string, string> = { low: "bg-leaf", medium: "bg-amber-400", high: "bg-red-500" };
+
+function Dot({ color }: { color: string }) {
+  return <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />;
+}
 
 export default function UtilityDashboard() {
   const feeders = useApi<Feeder[]>("/api/utility/feeders", 4000);
@@ -62,22 +78,34 @@ export default function UtilityDashboard() {
           )}
 
           {active === "congestion" && (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {list.map((f) => {
-                const pct = Math.min(100, (f.currentLoadKw / Math.max(f.capacityKw, 1)) * 100);
-                return (
-                  <Card key={f._id} title={f.code}>
-                    <p className="mb-2 text-xs text-neutral-400">{f.name}</p>
-                    <div className="h-3 w-full overflow-hidden rounded-full bg-neutral-100">
-                      <div className={`h-full ${BAR_COLOR[f.congestionLevel] ?? "bg-neutral-400"}`} style={{ width: `${pct}%` }} />
-                    </div>
-                    <div className="mt-2 flex items-center justify-between text-sm">
-                      <StatusBadge value={f.congestionLevel} />
-                      <span className="tabular-nums text-neutral-500">{pct.toFixed(0)}% of {f.capacityKw} kW</span>
-                    </div>
-                  </Card>
-                );
-              })}
+            <div className="space-y-6">
+              <Card title="Gandhinagar feeder congestion — live map">
+                <div className="mb-3 flex flex-wrap items-center gap-4 text-xs text-neutral-500">
+                  <span className="flex items-center gap-1.5"><Dot color="#38a169" /> Low</span>
+                  <span className="flex items-center gap-1.5"><Dot color="#d69e2e" /> Medium</span>
+                  <span className="flex items-center gap-1.5"><Dot color="#e53e3e" /> High</span>
+                  <span className="text-neutral-400">Circle size ∝ feeder utilisation · click a sector for detail</span>
+                </div>
+                <CongestionMap feeders={list} />
+              </Card>
+
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {list.map((f) => {
+                  const pct = Math.min(100, (f.currentLoadKw / Math.max(f.capacityKw, 1)) * 100);
+                  return (
+                    <Card key={f._id} title={f.code}>
+                      <p className="mb-2 text-xs text-neutral-400">{f.name}</p>
+                      <div className="h-3 w-full overflow-hidden rounded-full bg-neutral-100">
+                        <div className={`h-full ${BAR_COLOR[f.congestionLevel] ?? "bg-neutral-400"}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-sm">
+                        <StatusBadge value={f.congestionLevel} />
+                        <span className="tabular-nums text-neutral-500">{pct.toFixed(0)}% of {f.capacityKw} kW</span>
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
             </div>
           )}
 

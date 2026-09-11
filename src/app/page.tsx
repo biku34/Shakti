@@ -1,8 +1,7 @@
 import Link from "next/link";
 
 const ROLES: { key: string; label: string; blurb: string }[] = [
-  { key: "prosumer", label: "Prosumer", blurb: "Sell surplus solar, track earnings & RECs." },
-  { key: "consumer", label: "Consumer", blurb: "Discover cheaper local energy, place bids." },
+  { key: "prosumer", label: "Trader", blurb: "Buy & sell energy, track earnings & RECs." },
   { key: "utility", label: "Utility", blurb: "Monitor feeder load, congestion & settlement." },
   { key: "regulator", label: "Regulator", blurb: "Market oversight & fraud dashboards." },
   { key: "certificate_body", label: "Certificate Body", blurb: "Issue & validate RECs." },

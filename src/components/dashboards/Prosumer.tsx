@@ -3,10 +3,21 @@
 import { useState } from "react";
 import { api } from "@/lib/client";
 import {
-  Card, Stat, Table, Td, StatusBadge, Tabs, Btn, Field, inputClass,
+  Card, Table, Td, StatusBadge, Tabs, Btn, Field, inputClass,
   ErrorNote, TxLink, useApi, useToast,
 } from "@/components/ui";
-import OrderBook from "@/components/OrderBook";
+import { LiveChart, KpiTile } from "@/components/charts";
+import SellTerminal from "@/components/SellTerminal";
+import TradingDesk from "@/components/TradingDesk";
+
+type SeriesPoint = { t: string; generationKw: number; consumptionKw: number; exportKw: number; importKw: number };
+type PricePoint = { t: string; price: number; supplyKwh: number; demandKwh: number };
+type OrderBookPricing = { clearingPrice: number; supplyKwh: number; demandKwh: number; congestionLevel: string; fitFloor: number; retailCeiling: number };
+
+function hhmm(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
 
 type Totals = {
   generationKwh: number;
@@ -26,108 +37,140 @@ type MeterRow = {
 };
 type MetersResp = { meters: MeterRow[]; totals: Totals };
 type Offer = { _id: string; quantityKwh: number; remainingKwh: number; askPricePerKwh: number; status: string; expiresAt: string };
-type Trade = { _id: string; quantityKwh: number; pricePerKwh: number; totalCredits: number; status: string; anchorTxHash: string | null; buyerId: string; sellerId: string; settledAt: string | null };
+type Trade = { _id: string; quantityKwh: number; pricePerKwh: number; totalCredits: number; status: string; anchorTxHash: string | null; buyerId: string; sellerId: string; settledAt: string | null; createdAt: string | null };
 type Rec = { _id: string; serial: string; energyMwh: number; status: string; issueTxHash: string | null };
 
+function NavIcon({ path }: { path: string }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d={path} />
+    </svg>
+  );
+}
+
 const TABS = [
-  { id: "home", label: "Home" },
-  { id: "generation", label: "My Meter / Generation" },
-  { id: "sell", label: "Sell Surplus" },
-  { id: "trades", label: "My Trades" },
-  { id: "recs", label: "My RECs" },
-  { id: "earnings", label: "Earnings" },
+  { id: "home", label: "Home", icon: <NavIcon path="M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5" /> },
+  { id: "sell", label: "Sell Surplus", icon: <NavIcon path="M13 2 4.5 13.5H11l-1 8.5L19.5 10H13z" /> },
+  { id: "desk", label: "Trading Desk", icon: <NavIcon path="M3 3v18h18M7 15l3.5-4 3 2.5L20 7" /> },
+  { id: "recs", label: "My RECs", icon: <NavIcon path="M12 21s7-4 7-10V5l-7-2-7 2v6c0 6 7 10 7 10z" /> },
 ];
 
 export default function ProsumerDashboard({ feederId }: { feederId: string | null }) {
   const { show, node } = useToast();
   const meters = useApi<MetersResp>("/api/meters/mine", 5000);
-  const offers = useApi<Offer[]>("/api/offers/mine", 5000);
   const trades = useApi<Trade[]>("/api/trades/mine", 5000);
   const recs = useApi<Rec[]>("/api/rec/mine", 5000);
+  const series = useApi<{ points: SeriesPoint[] }>("/api/meters/mine/series?points=48", 3000);
+  const priceHist = useApi<{ points: PricePoint[] }>(
+    feederId ? `/api/feeders/${feederId}/price-history?points=60` : null,
+    3000,
+  );
+  const ob = useApi<{ pricing: OrderBookPricing }>(
+    feederId ? `/api/feeders/${feederId}/orderbook` : null,
+    3000,
+  );
   const t = meters.data?.totals;
 
-  const settledSales = (trades.data ?? []).filter((x) => x.status === "settled");
-  const earnings = settledSales.reduce((s, x) => s + x.totalCredits, 0);
+  const pts = series.data?.points ?? [];
+  const xLabels = pts.map((p) => hhmm(p.t));
+  const exportKw = pts.map((p) => p.exportKw);
+  const importKw = pts.map((p) => p.importKw);
+  const generationKw = pts.map((p) => p.generationKw);
+  const consumptionKw = pts.map((p) => p.consumptionKw);
+  // Cumulative exported energy across the window — a rising "surplus building up"
+  // trend for the Available-surplus tile sparkline.
+  const surplusTrend: number[] = [];
+  pts.reduce((acc, p) => {
+    const next = acc + p.exportKw;
+    surplusTrend.push(Number(next.toFixed(2)));
+    return next;
+  }, 0);
+  const priceSeries = (priceHist.data?.points ?? []).map((p) => p.price);
+  const pricing = ob.data?.pricing;
 
   return (
-    <Tabs tabs={TABS}>
+    <Tabs tabs={TABS} sidebar>
       {(active) => (
         <>
           {active === "home" && (
             <div className="space-y-6">
+              {/* KPI ticker row */}
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Stat label="Total generated" value={t?.generationKwh.toFixed(1) ?? "—"} unit="kWh" accent="solar" />
-                <Stat label="Total exported" value={t?.exportKwh.toFixed(1) ?? "—"} unit="kWh" accent="leaf" />
-                <Stat label="Available surplus" value={t?.availableSurplusKwh.toFixed(2) ?? "—"} unit="kWh" accent="grid" />
-                <Stat label="Earnings (settled)" value={earnings.toFixed(2)} unit="cr" accent="leaf" />
+                <KpiTile label="Solar output" value={generationKw.at(-1) ?? 0} unit="kW" color="#d69e2e" spark={generationKw} sparkColor="#d69e2e" />
+                <KpiTile label="Exporting now" value={exportKw.at(-1) ?? 0} unit="kW" color="#16a34a" spark={exportKw} sparkColor="#16a34a" />
+                <KpiTile label="Available surplus" value={t?.availableSurplusKwh ?? 0} unit="kWh" color="#2b6cb0" spark={surplusTrend} sparkColor="#2b6cb0" />
+                <KpiTile label="Clearing price" value={pricing?.clearingPrice ?? priceSeries.at(-1) ?? 0} unit="cr/kWh" color="#16a34a" spark={priceSeries} sparkColor="#16a34a" />
               </div>
-              <OrderBook feederId={feederId} />
+
+              {/* Three live charts in one row (full width) */}
+              <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                {/* Import vs Export */}
+                <Card
+                  title="Import vs Export"
+                  actions={<span className="hidden text-xs text-neutral-400 sm:inline">kW · sim {pts.length ? xLabels.at(-1) : "—"}</span>}
+                >
+                  {pts.length < 2 ? (
+                    <ChartWait />
+                  ) : (
+                    <LiveChart
+                      height={230}
+                      yUnit="kW"
+                      xLabels={xLabels}
+                      series={[
+                        { key: "export", label: "Export", color: "#16a34a", points: exportKw },
+                        { key: "import", label: "Import", color: "#2b6cb0", points: importKw },
+                      ]}
+                    />
+                  )}
+                </Card>
+
+                {/* Generation vs consumption */}
+                <Card title="Generation vs Consumption">
+                  {pts.length < 2 ? (
+                    <ChartWait />
+                  ) : (
+                    <LiveChart
+                      height={230}
+                      yUnit="kW"
+                      xLabels={xLabels}
+                      series={[
+                        { key: "gen", label: "Generation", color: "#d69e2e", points: generationKw },
+                        { key: "cons", label: "Consumption", color: "#e53e3e", points: consumptionKw },
+                      ]}
+                    />
+                  )}
+                </Card>
+
+                {/* Market clearing price */}
+                <Card title="Market clearing price">
+                  {priceSeries.length < 2 ? (
+                    <ChartWait />
+                  ) : (
+                    <LiveChart
+                      height={230}
+                      yUnit="cr"
+                      baseZero={false}
+                      area={false}
+                      xLabels={(priceHist.data?.points ?? []).map((p) => hhmm(p.t))}
+                      series={[{ key: "price", label: "Clearing price", color: "#7c3aed", points: priceSeries }]}
+                    />
+                  )}
+                  {pricing && (
+                    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-neutral-500">
+                      <span>Supply <strong className="text-neutral-800">{pricing.supplyKwh.toFixed(1)}</strong></span>
+                      <span>Demand <strong className="text-neutral-800">{pricing.demandKwh.toFixed(1)}</strong></span>
+                      <span className="flex items-center gap-1">Congestion <StatusBadge value={pricing.congestionLevel} /></span>
+                    </div>
+                  )}
+                </Card>
+              </div>
             </div>
           )}
 
-          {active === "generation" && (
-            <Card title="Bidirectional meters — latest interval">
-              <Table head={["Meter", "Capacity kW", "Status", "Gen kWh", "Export kWh", "Import kWh", "Last reading"]} rows={meters.data?.meters.length ?? 0}>
-                {meters.data?.meters.map((m) => (
-                  <tr key={m.id}>
-                    <Td className="font-mono text-xs">{m.code}</Td>
-                    <Td className="tabular-nums">{m.solarCapacityKw}</Td>
-                    <Td><StatusBadge value={m.status} /></Td>
-                    <Td className="tabular-nums">{m.latest?.generationKwh?.toFixed(3) ?? "—"}</Td>
-                    <Td className="tabular-nums text-leaf">{m.latest?.exportKwh?.toFixed(3) ?? "—"}</Td>
-                    <Td className="tabular-nums text-grid">{m.latest?.importKwh?.toFixed(3) ?? "—"}</Td>
-                    <Td className="text-xs text-neutral-400">{m.lastReadingAt ? new Date(m.lastReadingAt).toLocaleString() : "—"}</Td>
-                  </tr>
-                ))}
-              </Table>
-            </Card>
-          )}
+          {active === "sell" && <SellTerminal feederId={feederId} />}
 
-          {active === "sell" && (
-            <div className="space-y-6">
-              <SellForm
-                available={t?.availableSurplusKwh ?? 0}
-                onDone={(m) => { show(m); offers.refetch(); meters.refetch(); }}
-              />
-              <Card title="My offers">
-                <Table head={["Qty", "Remaining", "Ask", "Status", "Expires", ""]} rows={offers.data?.length ?? 0}>
-                  {offers.data?.map((o) => (
-                    <tr key={o._id}>
-                      <Td className="tabular-nums">{o.quantityKwh.toFixed(2)}</Td>
-                      <Td className="tabular-nums">{o.remainingKwh.toFixed(2)}</Td>
-                      <Td className="tabular-nums">{o.askPricePerKwh.toFixed(2)}</Td>
-                      <Td><StatusBadge value={o.status} /></Td>
-                      <Td className="text-xs text-neutral-400">{new Date(o.expiresAt).toLocaleTimeString()}</Td>
-                      <Td>
-                        {["open", "partial"].includes(o.status) && (
-                          <Btn size="sm" variant="ghost" onClick={async () => {
-                            try { await api(`/api/offers/${o._id}`, { method: "DELETE" }); show("Offer cancelled"); offers.refetch(); meters.refetch(); }
-                            catch (e) { show(e instanceof Error ? e.message : "Failed"); }
-                          }}>Cancel</Btn>
-                        )}
-                      </Td>
-                    </tr>
-                  ))}
-                </Table>
-              </Card>
-            </div>
-          )}
-
-          {active === "trades" && (
-            <Card title="My trades">
-              <Table head={["Qty kWh", "Price", "Total cr", "Status", "Anchor", "Settled"]} rows={trades.data?.length ?? 0}>
-                {trades.data?.map((x) => (
-                  <tr key={x._id}>
-                    <Td className="tabular-nums">{x.quantityKwh.toFixed(2)}</Td>
-                    <Td className="tabular-nums">{x.pricePerKwh.toFixed(2)}</Td>
-                    <Td className="tabular-nums font-medium text-leaf">+{x.totalCredits.toFixed(2)}</Td>
-                    <Td><StatusBadge value={x.status} /></Td>
-                    <Td><TxLink hash={x.anchorTxHash} /></Td>
-                    <Td className="text-xs text-neutral-400">{x.settledAt ? new Date(x.settledAt).toLocaleTimeString() : "—"}</Td>
-                  </tr>
-                ))}
-              </Table>
-            </Card>
+          {active === "desk" && (
+            <TradingDesk trades={trades.data ?? []} clearingPrice={pricing?.clearingPrice} />
           )}
 
           {active === "recs" && (
@@ -156,27 +199,6 @@ export default function ProsumerDashboard({ feederId }: { feederId: string | nul
             </div>
           )}
 
-          {active === "earnings" && (
-            <div className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-3">
-                <Stat label="Energy sold" value={settledSales.reduce((s, x) => s + x.quantityKwh, 0).toFixed(2)} unit="kWh" accent="leaf" />
-                <Stat label="Settled trades" value={settledSales.length} />
-                <Stat label="Total earned" value={earnings.toFixed(2)} unit="cr" accent="leaf" />
-              </div>
-              <Card title="Settled sales">
-                <Table head={["Qty kWh", "Price", "Credits", "Anchor"]} rows={settledSales.length}>
-                  {settledSales.map((x) => (
-                    <tr key={x._id}>
-                      <Td className="tabular-nums">{x.quantityKwh.toFixed(2)}</Td>
-                      <Td className="tabular-nums">{x.pricePerKwh.toFixed(2)}</Td>
-                      <Td className="tabular-nums text-leaf">+{x.totalCredits.toFixed(2)}</Td>
-                      <Td><TxLink hash={x.anchorTxHash} /></Td>
-                    </tr>
-                  ))}
-                </Table>
-              </Card>
-            </div>
-          )}
           {node}
         </>
       )}
@@ -184,36 +206,11 @@ export default function ProsumerDashboard({ feederId }: { feederId: string | nul
   );
 }
 
-function SellForm({ available, onDone }: { available: number; onDone: (m: string) => void }) {
-  const [qty, setQty] = useState("");
-  const [ask, setAsk] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true); setError(null);
-    try {
-      await api("/api/offers", { method: "POST", body: { quantityKwh: Number(qty), askPricePerKwh: Number(ask) } });
-      setQty(""); setAsk("");
-      onDone("Offer listed");
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-    finally { setBusy(false); }
-  }
-
+function ChartWait() {
   return (
-    <Card title={`List surplus for sale — ${available.toFixed(2)} kWh available`}>
-      <form onSubmit={submit} className="grid gap-4 sm:grid-cols-3 sm:items-end">
-        <Field label="Quantity (kWh)">
-          <input className={inputClass} type="number" step="0.01" min="0" max={available} value={qty} onChange={(e) => setQty(e.target.value)} required />
-        </Field>
-        <Field label="Ask price (cr/kWh)">
-          <input className={inputClass} type="number" step="0.01" min="0" value={ask} onChange={(e) => setAsk(e.target.value)} required />
-        </Field>
-        <Btn type="submit" disabled={busy || available <= 0}>{busy ? "Listing…" : "List offer"}</Btn>
-      </form>
-      <div className="mt-3"><ErrorNote error={error} /></div>
-    </Card>
+    <div className="flex h-[230px] items-center justify-center text-sm text-neutral-400">
+      Waiting for live meter data…
+    </div>
   );
 }
 

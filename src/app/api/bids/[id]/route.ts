@@ -7,7 +7,7 @@ import { audit } from "@/services/audit";
 // FR-3.5: cancel a bid while open|partial.
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const session = await requireRole("consumer");
+    const session = await requireRole("consumer", "prosumer");
     await connectDB();
     const { id } = await ctx.params;
 

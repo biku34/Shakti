@@ -15,8 +15,9 @@ const schema = z.object({
 // FR-3.3: a consumer places a bid; matching runs immediately (§6.5).
 export async function POST(req: Request) {
   try {
-    const session = await requireRole("consumer");
-    if (!session.feederId) return fail(400, "Consumer is not bound to a feeder");
+    // Consumers buy; prosumers can also buy (they draw energy at night).
+    const session = await requireRole("consumer", "prosumer");
+    if (!session.feederId) return fail(400, "User is not bound to a feeder");
     await connectDB();
     const body = await parseBody(req, schema);
 

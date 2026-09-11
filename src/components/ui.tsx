@@ -225,29 +225,91 @@ export function Td({
 export function Tabs({
   tabs,
   children,
+  sidebar = false,
 }: {
-  tabs: { id: string; label: string }[];
-  children: (active: string) => React.ReactNode;
+  tabs: { id: string; label: string; icon?: React.ReactNode }[];
+  children: (active: string, setActive: (id: string) => void) => React.ReactNode;
+  sidebar?: boolean;
 }) {
   const [active, setActive] = useState(tabs[0]?.id);
+
+  if (sidebar) {
+    // Full-height left nav rail + main content on the right (CRM-style shell).
+    // The rail bleeds out of the padded <main> to sit flush against the edge.
+    return (
+      <div className="flex flex-col lg:-my-6 lg:flex-row lg:items-stretch lg:gap-0">
+        {/* Desktop rail */}
+        <aside className="sticky top-[53px] z-10 hidden shrink-0 self-start border-r border-neutral-200 bg-white lg:-ml-8 lg:block lg:h-[calc(100vh-53px)] lg:w-60">
+          <nav className="flex h-full flex-col gap-1 px-3 py-6">
+            <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">Menu</div>
+            {tabs.map((t) => {
+              const on = active === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setActive(t.id)}
+                  className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+                    on
+                      ? "bg-leaf/10 text-leaf ring-1 ring-leaf/20"
+                      : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+                  }`}
+                >
+                  {t.icon && (
+                    <span className={on ? "text-leaf" : "text-neutral-400 group-hover:text-neutral-600"}>{t.icon}</span>
+                  )}
+                  <span>{t.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
+
+        {/* Mobile top bar (rail collapses to horizontal pills) */}
+        <div className="mb-6 flex lg:hidden">
+          <div className="inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-neutral-200 bg-neutral-100/70 p-1 shadow-sm">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setActive(t.id)}
+                className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  active === t.id
+                    ? "bg-white text-neutral-900 shadow-sm ring-1 ring-black/5"
+                    : "text-neutral-500 hover:text-neutral-800"
+                }`}
+              >
+                {t.icon}
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="min-w-0 flex-1 lg:py-6 lg:pl-8">{children(active, setActive)}</div>
+      </div>
+    );
+  }
+
   return (
     <div>
-      <div className="flex flex-wrap gap-1 border-b border-neutral-200">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setActive(t.id)}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition ${
-              active === t.id
-                ? "border-leaf text-leaf"
-                : "border-transparent text-neutral-500 hover:text-neutral-800"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      {/* Enterprise segmented tab bar — single line, horizontally scrollable */}
+      <div className="mb-6 flex">
+        <div className="inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-neutral-200 bg-neutral-100/70 p-1 shadow-sm">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setActive(t.id)}
+              className={`whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition ${
+                active === t.id
+                  ? "bg-white text-neutral-900 shadow-sm ring-1 ring-black/5"
+                  : "text-neutral-500 hover:text-neutral-800"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="pt-5">{children(active)}</div>
+      <div className="min-w-0">{children(active, setActive)}</div>
     </div>
   );
 }
