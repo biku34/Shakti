@@ -5,6 +5,7 @@ import { MeterModel } from "@/models/Meter";
 import { FeederModel } from "@/models/Feeder";
 import { MeterReadingModel } from "@/models/MeterReading";
 import { detectOnReading } from "@/services/fraud/detector";
+import { classifyCongestion } from "@/lib/congestion";
 
 // §7.3 ingestion contract — deliberately matches real bidirectional meter output (DC-6).
 const readingSchema = z.object({
@@ -95,21 +96,20 @@ async function recomputeFeederLoad(feederId: string): Promise<void> {
   const feeder = await FeederModel.findById(feederId);
   if (!feeder) return;
 
-  // Net grid load = Σ(import − export) over the most recent reading per meter.
+  // Feeder load = Σ solar output (kW) over the most recent reading per meter.
   const recent = await MeterReadingModel.aggregate([
     { $match: { feederId: feeder._id } },
     { $sort: { timestamp: -1 } },
-    { $group: { _id: "$meterId", importKwh: { $first: "$importKwh" }, exportKwh: { $first: "$exportKwh" }, interval: { $first: "$intervalMinutes" } } },
+    { $group: { _id: "$meterId", generationKwh: { $first: "$generationKwh" }, interval: { $first: "$intervalMinutes" } } },
   ]);
 
-  let netKw = 0;
+  let genKw = 0;
   for (const row of recent) {
     const hours = (row.interval ?? 15) / 60;
-    netKw += (row.importKwh - row.exportKwh) / hours;
+    genKw += row.generationKwh / hours;
   }
-  const loadKw = Math.max(0, netKw);
-  const ratio = loadKw / Math.max(feeder.capacityKw, 1);
+  const loadKw = Math.max(0, genKw);
   feeder.currentLoadKw = Number(loadKw.toFixed(2));
-  feeder.congestionLevel = ratio > 0.8 ? "high" : ratio > 0.5 ? "medium" : "low";
+  feeder.congestionLevel = classifyCongestion(loadKw, feeder.capacityKw);
   await feeder.save();
 }

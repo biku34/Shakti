@@ -5,7 +5,7 @@ const PricingSnapshotSchema = new Schema({
   timestamp: { type: Date, default: Date.now },
   supplyKwh: { type: Number, required: true },
   demandKwh: { type: Number, required: true },
-  congestionLevel: { type: String, enum: ["low", "medium", "high"], required: true },
+  congestionLevel: { type: String, enum: ["low", "risky", "high", "critical"], required: true },
   clearingPrice: { type: Number, required: true },
   fitFloor: { type: Number, required: true },
   retailCeiling: { type: Number, required: true },

@@ -93,6 +93,7 @@ export function Badge({ children, tone = "neutral" }: { children: React.ReactNod
     green: "bg-green-100 text-green-800",
     yellow: "bg-amber-100 text-amber-800",
     red: "bg-red-100 text-red-800",
+    orange: "bg-orange-100 text-orange-800",
     blue: "bg-blue-100 text-blue-800",
     purple: "bg-purple-100 text-purple-800",
   };
@@ -120,15 +121,16 @@ const STATUS_TONE: Record<string, string> = {
   confirmed: "red",
   investigating: "yellow",
   dismissed: "neutral",
-  low: "neutral",
+  low: "green",
   medium: "yellow",
+  risky: "orange",
   high: "red",
   critical: "red",
   online: "green",
   offline: "red",
 };
-export function StatusBadge({ value }: { value: string }) {
-  return <Badge tone={STATUS_TONE[value] ?? "neutral"}>{value}</Badge>;
+export function StatusBadge({ value, label }: { value: string; label?: string }) {
+  return <Badge tone={STATUS_TONE[value] ?? "neutral"}>{label ?? value}</Badge>;
 }
 
 export function Btn({

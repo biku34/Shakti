@@ -9,8 +9,9 @@ import { EnergyOfferModel } from "@/models/EnergyOffer";
 import { EnergyBidModel } from "@/models/EnergyBid";
 import { FeederModel } from "@/models/Feeder";
 import { PricingSnapshotModel } from "@/models/PricingSnapshot";
+import type { CongestionLevel } from "@/lib/congestion";
 
-export type CongestionLevel = "low" | "medium" | "high";
+export type { CongestionLevel };
 
 export type PricingInput = {
   feederId: string;
@@ -34,8 +35,9 @@ export interface IPricingStrategy {
 
 const CONGESTION_FACTOR: Record<CongestionLevel, number> = {
   low: 0.0,
-  medium: 0.15,
+  risky: 0.15,
   high: 0.3,
+  critical: 0.45,
 };
 
 function clamp(v: number, lo: number, hi: number): number {

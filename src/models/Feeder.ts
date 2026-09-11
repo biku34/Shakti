@@ -9,7 +9,7 @@ const FeederSchema = new Schema({
   },
   capacityKw: { type: Number, required: true },
   currentLoadKw: { type: Number, default: 0 },
-  congestionLevel: { type: String, enum: ["low", "medium", "high"], default: "low" },
+  congestionLevel: { type: String, enum: ["low", "risky", "high", "critical"], default: "low" },
   connectedMeters: [{ type: Schema.Types.ObjectId, ref: "Meter" }],
 });
 
