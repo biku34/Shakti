@@ -55,12 +55,12 @@ export default function Home() {
       {/* Content floats directly on the map; only controls capture clicks. */}
       <div className="pointer-events-none absolute inset-y-0 left-0 z-10 flex w-full flex-col justify-center gap-7 overflow-hidden px-8 py-6 [text-shadow:0_1px_10px_rgba(255,255,255,0.9)] sm:px-12 lg:w-[46%] lg:max-w-xl lg:py-8">
         {/* Brand */}
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-700 text-lg text-white shadow-sm [text-shadow:none]">
+        <div className="flex items-center gap-3">
+          <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-700 text-2xl text-white shadow-sm [text-shadow:none]">
             ⚡
           </span>
-          <span className="text-sm font-semibold tracking-tight text-blue-950">
-            Renewable Energy Intelligence
+          <span className="text-3xl font-bold tracking-tight text-blue-950">
+            Shakti
           </span>
         </div>
 
@@ -70,9 +70,9 @@ export default function Home() {
             Gandhinagar · Pilot Grid
           </p>
           <h1 className="mt-3 text-4xl font-bold leading-[1.1] tracking-tight text-blue-950 sm:text-5xl">
-            Trade sunlight.
+            Trade clean energy.
             <br />
-            <span className="text-leaf">Trust every certificate.</span>
+            <span className="text-leaf">Certify every kilowatt-hour.</span>
           </h1>
           <p className="mt-4 max-w-lg text-[15px] font-medium leading-relaxed text-blue-900/90">
             One stack where metered rooftop-solar drives a peer-to-peer marketplace
