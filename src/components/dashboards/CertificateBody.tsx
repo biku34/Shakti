@@ -72,9 +72,9 @@ export default function CertificateBodyDashboard() {
   async function approve(id: string) {
     setApproving(id);
     try {
-      const r = await api<{ alertsRaised: number; creditsAwarded: number }>(`/api/rec/${id}/approve`, { method: "POST" });
-      const paid = `issued & anchored — ${r.creditsAwarded.toFixed(2)} cr paid to generator`;
-      show(r.alertsRaised > 0 ? `REC ${paid}, but ${r.alertsRaised} fraud alert(s) raised!` : `REC ${paid}`);
+      const r = await api<{ alertsRaised: number }>(`/api/rec/${id}/approve`, { method: "POST" });
+      const msg = "REC issued & anchored on-chain — generator can now list it for sale";
+      show(r.alertsRaised > 0 ? `${msg}, but ${r.alertsRaised} fraud alert(s) raised!` : msg);
       queue.refetch(); registry.refetch();
     } catch (e) { show(e instanceof Error ? e.message : "Failed"); }
     finally { setApproving(null); }

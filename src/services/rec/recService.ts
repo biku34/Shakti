@@ -5,7 +5,6 @@
  * another REC or be double-sold (§3.3 coherence, FR-6.6, FR-6.7).
  */
 import { connectDB } from "@/lib/db";
-import { env } from "@/lib/env";
 import { MeterModel } from "@/models/Meter";
 import { MeterReadingModel } from "@/models/MeterReading";
 import { RecCertificateModel } from "@/models/RecCertificate";
@@ -143,7 +142,7 @@ export async function requestIssuance(params: {
 /** Certificate body approves a pending REC → issued + anchored, then scanned (FR-6.2, FR-6.3). */
 export async function approveIssuance(
   recId: string,
-): Promise<{ issueTxHash: string | null; alertsRaised: number; creditsAwarded: number; generatorBalance: number | null }> {
+): Promise<{ issueTxHash: string | null; alertsRaised: number }> {
   await connectDB();
   const rec = await RecCertificateModel.findById(recId);
   if (!rec) throw new Error("REC not found");
@@ -158,22 +157,15 @@ export async function approveIssuance(
     backingReadingIds: rec.backingReadingIds.map(String),
   });
 
-  // Pay the generator for the certified green attribute. The backing surplus was
-  // already reserved at request time (recBackedKwh), so issuance just finalises
-  // it and credits the wallet.
-  const creditsAwarded = Number((rec.energyMwh * env.rec.creditPerMwh()).toFixed(4));
-  const generator = await UserModel.findById(rec.generatorId);
-  let generatorBalance: number | null = null;
-  if (generator) {
-    generator.creditBalance = Number((generator.creditBalance + creditsAwarded).toFixed(4));
-    await generator.save();
-    generatorBalance = generator.creditBalance;
-  }
-
+  // Issuance does NOT mint or pay any credits. The certified green attribute
+  // becomes a tradeable certificate held by the generator; the generator earns
+  // credits only when they SELL it on the secondary market (purchaseRec). The
+  // backing surplus stays reserved (recBackedKwh). Issuance is still anchored
+  // on-chain for provenance regardless of any payment.
   rec.status = "issued";
   rec.issueTxHash = anchor.txHash;
   rec.contentHash = anchor.contentHash;
-  rec.creditsAwarded = creditsAwarded;
+  rec.creditsAwarded = 0;
   await rec.save();
 
   await RecTransactionModel.create({
@@ -186,7 +178,7 @@ export async function approveIssuance(
 
   // FR-7.1: run REC-level fraud rules on issuance.
   const alertsRaised = await detectOnRec(recId);
-  return { issueTxHash: anchor.txHash, alertsRaised, creditsAwarded, generatorBalance };
+  return { issueTxHash: anchor.txHash, alertsRaised };
 }
 
 /**
@@ -221,7 +213,19 @@ export async function cancelRequest(recId: string, holderId: string): Promise<{ 
   return { releasedKwh: Number(releasedKwh.toFixed(4)) };
 }
 
-/** Transfer a REC to a new holder, anchored (FR-6.4). */
+/** Clear any active secondary-market listing on a REC document (in place, unsaved). */
+function clearListing(rec: { listed?: boolean; askCreditsPerKwh?: number | null; listedAt?: Date | null }): void {
+  rec.listed = false;
+  rec.askCreditsPerKwh = null;
+  rec.listedAt = null;
+}
+
+/** Energy of a certificate in kWh — all market pricing is denominated per kWh. */
+function energyKwh(energyMwh: number): number {
+  return energyMwh * 1000;
+}
+
+/** Transfer a REC to a new holder, anchored (FR-6.4). Custody move — no credits. */
 export async function transferRec(recId: string, fromId: string, toId: string): Promise<void> {
   await connectDB();
   const rec = await RecCertificateModel.findById(recId);
@@ -232,8 +236,124 @@ export async function transferRec(recId: string, fromId: string, toId: string): 
   const anchor = await anchorRecord("rec_txn", recId, { action: "transfer", recId, fromId, toId, at: new Date() });
   rec.status = "transferred";
   rec.currentHolderId = toId as never;
+  clearListing(rec); // ownership changed → any standing listing is void
   await rec.save();
   await RecTransactionModel.create({ recId: rec._id, action: "transfer", fromId, toId, anchorTxHash: anchor.txHash });
+}
+
+/**
+ * List an issued/transferred REC on the secondary market at `askCreditsPerKwh`.
+ * Only the current holder can list; re-listing updates the price. Credits are the
+ * only currency, so the ask is denominated in credits per kWh (§ market).
+ */
+export async function listRecForSale(
+  recId: string,
+  holderId: string,
+  askCreditsPerKwh: number,
+): Promise<{ askCreditsPerKwh: number; totalCredits: number }> {
+  await connectDB();
+  if (!(askCreditsPerKwh > 0)) throw new Error("Ask price must be greater than 0");
+  const rec = await RecCertificateModel.findById(recId);
+  if (!rec) throw new Error("REC not found");
+  if (String(rec.currentHolderId) !== holderId) throw new Error("Only the current holder can list this REC");
+  if (!["issued", "transferred"].includes(rec.status)) throw new Error(`Cannot list a ${rec.status} REC`);
+
+  const ask = Number(askCreditsPerKwh.toFixed(4));
+  const totalCredits = Number((energyKwh(rec.energyMwh) * ask).toFixed(4));
+  rec.listed = true;
+  rec.askCreditsPerKwh = ask;
+  rec.listedAt = new Date();
+  await rec.save();
+  await RecTransactionModel.create({ recId: rec._id, action: "list", fromId: holderId, credits: totalCredits });
+  return { askCreditsPerKwh: ask, totalCredits };
+}
+
+/** Remove a REC from the secondary market. Only the current holder can unlist. */
+export async function unlistRec(recId: string, holderId: string): Promise<void> {
+  await connectDB();
+  const rec = await RecCertificateModel.findById(recId);
+  if (!rec) throw new Error("REC not found");
+  if (String(rec.currentHolderId) !== holderId) throw new Error("Only the current holder can unlist this REC");
+  if (!rec.listed) throw new Error("REC is not listed");
+  clearListing(rec);
+  await rec.save();
+  await RecTransactionModel.create({ recId: rec._id, action: "unlist", fromId: holderId });
+}
+
+/**
+ * Buy a listed REC. Moves credits buyer→seller (the only currency), transfers
+ * ownership, anchors the sale on-chain and records it in the provenance trail.
+ * Funds-guarded with rollback, mirroring energy-trade settlement (FR-5.3, FR-5.6).
+ */
+export async function purchaseRec(
+  recId: string,
+  buyerId: string,
+): Promise<{ totalCredits: number; buyerBalance: number; sellerBalance: number; txHash: string | null }> {
+  await connectDB();
+  const rec = await RecCertificateModel.findById(recId);
+  if (!rec) throw new Error("REC not found");
+  if (!rec.listed || rec.askCreditsPerKwh == null) throw new Error("REC is not listed for sale");
+  if (!["issued", "transferred"].includes(rec.status)) throw new Error(`Cannot buy a ${rec.status} REC`);
+
+  const sellerId = String(rec.currentHolderId);
+  if (sellerId === buyerId) throw new Error("You already hold this REC");
+
+  const totalCredits = Number((energyKwh(rec.energyMwh) * rec.askCreditsPerKwh).toFixed(4));
+  const [buyer, seller] = await Promise.all([
+    UserModel.findById(buyerId),
+    UserModel.findById(sellerId),
+  ]);
+  if (!buyer) throw new Error("Buyer not found");
+  if (!seller) throw new Error("Seller not found");
+  if (buyer.creditBalance < totalCredits) {
+    throw new Error(`Insufficient credits: need ${totalCredits.toFixed(2)} cr, have ${buyer.creditBalance.toFixed(2)} cr`);
+  }
+
+  // Debit buyer / credit seller, then transfer + anchor. Roll the money back on
+  // any failure so a broken sale never leaves credits moved without ownership.
+  buyer.creditBalance = Number((buyer.creditBalance - totalCredits).toFixed(4));
+  seller.creditBalance = Number((seller.creditBalance + totalCredits).toFixed(4));
+  try {
+    await buyer.save();
+    await seller.save();
+
+    const anchor = await anchorRecord("rec_txn", recId, {
+      action: "sale",
+      recId,
+      fromId: sellerId,
+      toId: buyerId,
+      credits: totalCredits,
+      at: new Date(),
+    });
+
+    rec.status = "transferred";
+    rec.currentHolderId = buyerId as never;
+    clearListing(rec);
+    await rec.save();
+
+    await RecTransactionModel.create({
+      recId: rec._id,
+      action: "transfer",
+      fromId: sellerId,
+      toId: buyerId,
+      credits: totalCredits,
+      anchorTxHash: anchor.txHash,
+    });
+
+    return {
+      totalCredits,
+      buyerBalance: buyer.creditBalance,
+      sellerBalance: seller.creditBalance,
+      txHash: anchor.txHash,
+    };
+  } catch (err) {
+    console.error("[rec] purchase failed, rolling back credits:", err);
+    buyer.creditBalance = Number((buyer.creditBalance + totalCredits).toFixed(4));
+    seller.creditBalance = Number((seller.creditBalance - totalCredits).toFixed(4));
+    await buyer.save().catch(() => {});
+    await seller.save().catch(() => {});
+    throw err;
+  }
 }
 
 /** Retire a REC — permanently non-transferable/non-reusable (FR-6.5). */
@@ -247,6 +367,7 @@ export async function retireRec(recId: string, holderId: string): Promise<void> 
 
   const anchor = await anchorRecord("rec_txn", recId, { action: "retire", recId, holderId, at: new Date() });
   rec.status = "retired";
+  clearListing(rec); // a retired REC leaves the market permanently
   await rec.save();
   await RecTransactionModel.create({ recId: rec._id, action: "retire", fromId: holderId, toId: null, anchorTxHash: anchor.txHash });
 }
@@ -273,6 +394,7 @@ export async function revokeRec(recId: string, actorId: string): Promise<void> {
   }
 
   rec.status = "revoked";
+  clearListing(rec); // a revoked REC must not remain purchasable
   await rec.save();
   await RecTransactionModel.create({ recId: rec._id, action: "revoke", fromId: actorId, toId: null, anchorTxHash: anchor.txHash });
 }

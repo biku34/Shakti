@@ -23,6 +23,12 @@ const RecCertificateSchema = new Schema({
   currentHolderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
   // Credits paid to the generator when this REC was issued (0 while pending).
   creditsAwarded: { type: Number, default: 0 },
+  // Secondary-market listing (industry-standard REC resale). A holder lists an
+  // issued/transferred REC at a credits price; a buyer purchases it, moving
+  // credits and ownership. Cleared on sale, retire, transfer or revoke.
+  listed: { type: Boolean, default: false },
+  askCreditsPerKwh: { type: Number, default: null },
+  listedAt: { type: Date, default: null },
   issueTxHash: { type: String, default: null },
   contentHash: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },

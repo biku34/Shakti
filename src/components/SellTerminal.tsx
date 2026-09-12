@@ -36,7 +36,7 @@ type OType = "limit" | "market";
 export default function SellTerminal({ feederId }: { feederId: string | null }) {
   const { show, node } = useToast();
   const ob = useApi<OB>(feederId ? `/api/feeders/${feederId}/orderbook` : null, 3000);
-  const priceHist = useApi<{ points: PricePoint[] }>(
+  const priceHist = useApi<{ points: PricePoint[]; high: number | null; low: number | null; windowMinutes?: number }>(
     feederId ? `/api/feeders/${feederId}/price-history?points=60` : null, 3000);
   const myOffers = useApi<WorkingOrder[]>("/api/offers/mine", 4000);
   const myBids = useApi<WorkingOrder[]>("/api/bids/mine", 4000);
@@ -50,8 +50,10 @@ export default function SellTerminal({ feederId }: { feederId: string | null }) 
   const open = priceSeries[0] ?? ltp;
   const chg = ltp - open;
   const chgPct = open ? (chg / open) * 100 : 0;
-  const hi = priceSeries.length ? Math.max(...priceSeries) : ltp;
-  const lo = priceSeries.length ? Math.min(...priceSeries) : ltp;
+  // High/Low over the trailing 60 min (server-computed). Fall back to the chart
+  // window only if the API hasn't provided the rolling range yet.
+  const hi = priceHist.data?.high ?? (priceSeries.length ? Math.max(...priceSeries) : ltp);
+  const lo = priceHist.data?.low ?? (priceSeries.length ? Math.min(...priceSeries) : ltp);
 
   const surplus = meters.data?.totals.availableSurplusKwh ?? 0;
   const credits = me.data?.creditBalance ?? 0;
@@ -87,8 +89,8 @@ export default function SellTerminal({ feederId }: { feederId: string | null }) 
           </span>
         </div>
         <div className="ml-auto flex flex-wrap gap-x-5 gap-y-1 text-xs">
-          <Stat k="High" v={n2(hi)} />
-          <Stat k="Low" v={n2(lo)} />
+          <Stat k="High 1h" v={n2(hi)} />
+          <Stat k="Low 1h" v={n2(lo)} />
           <Stat k="Supply" v={`${n2(pricing?.supplyKwh ?? 0)} kWh`} />
           <Stat k="Demand" v={`${n2(pricing?.demandKwh ?? 0)} kWh`} />
           <Stat k="Congestion" node={<StatusBadge value={pricing?.congestionLevel ?? "low"} />} />
@@ -181,8 +183,8 @@ function OrderTicket({
       const q = Number(qty);
       if (side === "sell") {
         const p = otype === "market" ? ltp : Number(price);
-        await api("/api/offers", { method: "POST", body: { quantityKwh: q, askPricePerKwh: p } });
-        onDone(`Sell order placed — ${n2(q)} kWh @ ${n2(p)}`);
+        const r = await api<{ match: { filledKwh: number } }>("/api/offers", { method: "POST", body: { quantityKwh: q, askPricePerKwh: p } });
+        onDone(r.match.filledKwh > 0 ? `Sold ${n2(r.match.filledKwh)} kWh instantly` : `Sell order placed — ${n2(q)} kWh @ ${n2(p)}`);
       } else {
         const p = otype === "market" ? ceil : Number(price);
         const r = await api<{ match: { filledKwh: number } }>("/api/bids", { method: "POST", body: { quantityKwh: q, maxPricePerKwh: p } });

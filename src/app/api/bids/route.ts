@@ -41,7 +41,9 @@ export async function POST(req: Request) {
       expiresAt: new Date(Date.now() + body.expiresInMinutes * 60 * 1000),
     });
 
-    await audit(session.userId, "bid.create", { type: "bid", id: String(bid._id) });
+    void audit(session.userId, "bid.create", { type: "bid", id: String(bid._id) }).catch((e) =>
+      console.error("[audit] bid.create failed:", e),
+    );
 
     const match = await matchBid(String(bid._id));
     const refreshed = await EnergyBidModel.findById(bid._id);

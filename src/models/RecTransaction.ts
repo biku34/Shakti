@@ -2,9 +2,12 @@ import { Schema, model, models, type InferSchemaType, type Model } from "mongoos
 
 const RecTransactionSchema = new Schema({
   recId: { type: Schema.Types.ObjectId, ref: "RecCertificate", required: true },
-  action: { type: String, enum: ["issue", "transfer", "retire", "revoke"], required: true },
+  action: { type: String, enum: ["issue", "transfer", "retire", "revoke", "list", "unlist"], required: true },
   fromId: { type: Schema.Types.ObjectId, ref: "User", default: null },
   toId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  // Credits that changed hands for this event (a priced transfer/sale), or the
+  // ask amount for a listing. Null for events with no money leg.
+  credits: { type: Number, default: null },
   anchorTxHash: { type: String, default: null },
   timestamp: { type: Date, default: Date.now },
 });

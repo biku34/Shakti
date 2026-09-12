@@ -7,6 +7,7 @@ import { MeterReadingModel } from "@/models/MeterReading";
 import { EnergyOfferModel } from "@/models/EnergyOffer";
 import { FeederModel } from "@/models/Feeder";
 import { isTradingSuspended, priceBounds } from "@/services/trading/controls";
+import { matchOffer } from "@/services/trading/matching";
 import { audit } from "@/services/audit";
 
 const schema = z.object({
@@ -53,14 +54,24 @@ export async function POST(req: Request) {
     // Reserve export across readings greedily (FR-3.2: no double-selling).
     let toReserve = body.quantityKwh;
     const sourceReadingIds: unknown[] = [];
+    const reservations: { id: unknown; take: number }[] = [];
     for (const r of readings) {
       if (toReserve <= 1e-6) break;
       const free = r.exportKwh - r.committedExportKwh - r.recBackedKwh;
-      const take = Math.min(free, toReserve);
-      r.committedExportKwh = Number((r.committedExportKwh + take).toFixed(4));
-      await r.save();
+      const take = Number(Math.min(free, toReserve).toFixed(4));
+      if (take <= 0) continue;
+      reservations.push({ id: r._id, take });
       sourceReadingIds.push(r._id);
       toReserve -= take;
+    }
+    // Commit every reservation in ONE bulk write instead of a save per reading
+    // (was N sequential Atlas round-trips). $inc is atomic against concurrency.
+    if (reservations.length) {
+      await MeterReadingModel.bulkWrite(
+        reservations.map((rr) => ({
+          updateOne: { filter: { _id: rr.id }, update: { $inc: { committedExportKwh: rr.take } } },
+        })),
+      );
     }
 
     const offer = await EnergyOfferModel.create({
@@ -73,8 +84,15 @@ export async function POST(req: Request) {
       expiresAt: new Date(Date.now() + body.expiresInMinutes * 60 * 1000),
     });
 
-    await audit(session.userId, "offer.create", { type: "offer", id: String(offer._id) });
-    return ok(offer);
+    void audit(session.userId, "offer.create", { type: "offer", id: String(offer._id) }).catch((e) =>
+      console.error("[audit] offer.create failed:", e),
+    );
+
+    // FR-5.1 (symmetric): match the new sell immediately against resting bids,
+    // so a sell that crosses an existing buy settles now instead of waiting for
+    // the next bid to arrive.
+    const match = await matchOffer(String(offer._id));
+    return ok({ offer, match });
   } catch (err) {
     return errorResponse(err);
   }

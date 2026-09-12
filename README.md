@@ -98,6 +98,7 @@ Control API (same-origin): `GET /api/smart/state`, `POST /api/smart/meter`
 | Ingestion | `POST /api/ingest/readings` (service token) |
 | Trading | `GET /api/feeders/:id/orderbook` · `GET /api/feeders/:id/price` · `POST/DELETE /api/offers[/:id]` · `POST/DELETE /api/bids[/:id]` · `GET /api/trades/mine` |
 | REC | `POST /api/rec/request` · `GET /api/rec/issuance-queue` · `POST /api/rec/:id/{approve,transfer,retire,revoke}` · `GET /api/rec/:id/provenance` · `POST /api/rec/:id/ai-review` (Groq per-REC evidence review) |
+| REC market | `GET /api/rec/market` (listed certificates) · `POST /api/rec/:id/list` `{askCreditsPerKwh}` · `POST /api/rec/:id/unlist` · `POST /api/rec/:id/buy` (credits move buyer→seller, ownership transfers, anchored) |
 | Fraud | `GET /api/fraud/alerts` · `POST /api/fraud/alerts/:id/status` · `POST /api/fraud/scan` · `POST /api/fraud/ai-scan` (Groq agentic review) |
 | Oversight | `GET /api/utility/feeders` · `POST /api/utility/recommendations` (Gemini priority actions) · `GET /api/reports/market` · `GET /api/audit/export` · `GET /api/verify/:refType/:refId` |
 
