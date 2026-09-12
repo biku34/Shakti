@@ -50,11 +50,40 @@ export async function GET() {
     ]);
     const loadByFeeder = new Map(loads.map((l) => [String(l._id), l.loadKw]));
 
+    // Cumulative available surplus (kWh) per feeder: verified exported energy
+    // not yet committed to an offer or backing a REC, summed over ALL readings —
+    // so it accumulates over time as meters keep producing. Same definition as
+    // the prosumer "Available surplus" tile, aggregated to the feeder.
+    const surplus = await MeterReadingModel.aggregate<{
+      _id: unknown;
+      verifiedExportKwh: number;
+      committedExportKwh: number;
+      recBackedKwh: number;
+    }>([
+      {
+        $group: {
+          _id: "$feederId",
+          verifiedExportKwh: {
+            $sum: { $cond: [{ $eq: ["$verified", true] }, "$exportKwh", 0] },
+          },
+          committedExportKwh: { $sum: "$committedExportKwh" },
+          recBackedKwh: { $sum: "$recBackedKwh" },
+        },
+      },
+    ]);
+    const surplusByFeeder = new Map(
+      surplus.map((s) => [
+        String(s._id),
+        Math.max(0, s.verifiedExportKwh - s.committedExportKwh - s.recBackedKwh),
+      ]),
+    );
+
     const enriched = feeders.map((f) => {
       const loadKw = Number((loadByFeeder.get(String(f._id)) ?? 0).toFixed(2));
       return {
         ...f,
         currentLoadKw: loadKw,
+        availableSurplusKwh: Number((surplusByFeeder.get(String(f._id)) ?? 0).toFixed(2)),
         congestionLevel: classifyCongestion(loadKw, f.capacityKw),
         meterCount: countByFeeder.get(String(f._id)) ?? 0,
       };

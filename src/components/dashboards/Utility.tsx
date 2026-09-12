@@ -29,6 +29,7 @@ type Feeder = {
   name: string;
   capacityKw: number;
   currentLoadKw: number;
+  availableSurplusKwh: number;
   congestionLevel: CongestionLevel;
   meterCount: number;
   location: { lat: number; lng: number };
@@ -107,6 +108,7 @@ export default function UtilityDashboard() {
     name: z.area,
     capacityKw: z.capacityKw,
     currentLoadKw: z.loadKw,
+    availableSurplusKwh: 0,
     congestionLevel: classifyCongestion(z.loadKw, z.capacityKw),
     meterCount: 0,
     location: { lat: z.center[0], lng: z.center[1] },
@@ -115,6 +117,7 @@ export default function UtilityDashboard() {
 
   const totalCap = monitorList.reduce((s, f) => s + f.capacityKw, 0);
   const totalLoad = monitorList.reduce((s, f) => s + f.currentLoadKw, 0);
+  const totalSurplus = monitorList.reduce((s, f) => s + (f.availableSurplusKwh ?? 0), 0);
   const totalMeters = monitorList.reduce((s, f) => s + (f.meterCount ?? 0), 0);
   const counts = CONGESTION_LEVELS.reduce(
     (acc, lvl) => ({ ...acc, [lvl]: monitorList.filter((f) => levelOf(f) === lvl).length }),
@@ -139,11 +142,12 @@ export default function UtilityDashboard() {
         <>
           {active === "monitor" && (
             <div className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
                 <Stat label="Feeders" value={monitorList.length} />
                 <Stat label="Meters" value={totalMeters} />
                 <Stat label="Total capacity" value={totalCap.toFixed(0)} unit="kW" />
                 <Stat label="Solar output" value={totalLoad.toFixed(1)} unit="kW" accent="solar" />
+                <Stat label="Available surplus" value={totalSurplus.toFixed(1)} unit="kWh" accent="leaf" />
                 <Stat label="Utilisation" value={totalCap ? ((totalLoad / totalCap) * 100).toFixed(1) : "—"} unit="%" />
               </div>
 
@@ -164,7 +168,7 @@ export default function UtilityDashboard() {
                 </Card>
 
                 <Card title="Feeders">
-                  <Table head={["Code", "Name", "Meters", "Solar output kW", "Capacity kW", "Load %", "Congestion"]} rows={monitorList.length}>
+                  <Table head={["Code", "Name", "Meters", "Solar output kW", "Available surplus kWh", "Capacity kW", "Load %", "Congestion"]} rows={monitorList.length}>
                     {monitorList.map((f) => {
                       const lvl = levelOf(f);
                       return (
@@ -173,6 +177,7 @@ export default function UtilityDashboard() {
                           <Td>{f.name}</Td>
                           <Td className="tabular-nums">{f.meterCount ?? 0}</Td>
                           <Td className="tabular-nums">{f.currentLoadKw.toFixed(1)}</Td>
+                          <Td className="tabular-nums font-medium text-leaf">{(f.availableSurplusKwh ?? 0).toFixed(1)}</Td>
                           <Td className="tabular-nums">{f.capacityKw}</Td>
                           <Td className="tabular-nums">{utilisationPct(f.currentLoadKw, f.capacityKw).toFixed(1)}%</Td>
                           <Td><StatusBadge value={lvl} label={CONGESTION_LABEL[lvl]} /></Td>

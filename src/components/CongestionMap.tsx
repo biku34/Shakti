@@ -13,6 +13,7 @@ export type MapFeeder = {
   name: string;
   capacityKw: number;
   currentLoadKw: number;
+  availableSurplusKwh: number;
   congestionLevel: string;
   location: { lat: number; lng: number };
 };
@@ -190,6 +191,10 @@ export default function CongestionMap({
                     <div className="font-semibold">{f.name}</div>
                     <div>Load: {f.currentLoadKw.toFixed(1)} / {f.capacityKw} kW</div>
                     <div>Utilisation: {(util * 100).toFixed(1)}%</div>
+                    <div>
+                      Available surplus:{" "}
+                      <span className="font-semibold text-green-700">{f.availableSurplusKwh.toFixed(1)} kWh</span>
+                    </div>
                     <div className="capitalize">
                       Congestion: <span style={{ color }}>{CONGESTION_LABEL[level]}</span>
                     </div>
