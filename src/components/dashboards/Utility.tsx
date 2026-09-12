@@ -113,7 +113,7 @@ export default function UtilityDashboard() {
     // energy figure that drives congestion (keeps the transfer demo colourful).
     availableSurplusKwh: z.loadKw,
     congestionLevel: classifyCongestion(z.loadKw, z.capacityKw),
-    meterCount: 0,
+    meterCount: z.meterCount,
     location: { lat: z.center[0], lng: z.center[1] },
   }));
   const monitorList = [...realFeeders, ...zoneRows];

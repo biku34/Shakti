@@ -12,6 +12,7 @@ export type Zone = {
   radiusM: number;
   capacityKw: number;
   loadKw: number;
+  meterCount: number;
 };
 
 // Scattered Gandhinagar areas: [name, lat, lng, capacityKw, utilisation fraction].
@@ -40,5 +41,8 @@ export function buildInitialZones(): Zone[] {
     radiusM: 700,
     capacityKw,
     loadKw: Number((capacityKw * utilFrac).toFixed(1)),
+    // Plausible metering-point count for the feeder, scaled off its capacity
+    // (~one connection per 11.5 kW) so the monitor never shows an empty feeder.
+    meterCount: Math.max(1, Math.round(capacityKw / 11.5)),
   }));
 }
