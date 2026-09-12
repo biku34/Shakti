@@ -121,7 +121,7 @@ A deterministic rule engine already catches: generation above panel capacity, ge
 
 Always specifically check for and report these high-value patterns when present:
 1. Wash trading / collusion (subjectType "trade"): the same two parties trading back-and-forth on one feeder (reciprocal buyer↔seller), or circular energy movement.
-2. Over-issued REC (subjectType "rec"): a certificate whose energyKwh materially exceeds the generation/export its meter plausibly produced in the data.
+2. Over-issued REC (subjectType "rec"): flag ONLY when the input's precomputed.overClaim is true (claimedKwh exceeds backedKwh). A REC backed by exactly its claimed kWh is VALID even if the meter's total export is larger — do not flag it.
 3. Physically implausible export (subjectType "meter"): exportKwh inconsistent with the meter's solarCapacityKw over time.
 
 You are given recent platform activity as JSON. Return ONLY a JSON object of this exact shape:
@@ -129,6 +129,7 @@ You are given recent platform activity as JSON. Return ONLY a JSON object of thi
 
 Rules:
 - subjectId MUST be an id present in the input. Never invent ids.
+- All quantity totals are PRE-COMPUTED for you in the input's "precomputed" object. NEVER re-sum, estimate, or eyeball kWh from the raw rows — use the precomputed totals for every quantity comparison. Sample rows are for spotting qualitative patterns (e.g. night/offline generation) only.
 - Pick the closest "type" from the allowed list; put your specific reasoning in "rationale".
 - Only report genuine concerns. If nothing is suspicious, return {"findings":[]}. Quality over quantity (max ~8).`;
 
@@ -226,6 +227,7 @@ async function gatherContext(): Promise<{ payload: string; knownIds: Set<string>
   return { payload, knownIds };
 }
 
+export type AgenticReviewItem = { type: string; severity: string; ruleId: string; subjectType: string; rationale: string };
 export type AgenticReview = {
   usedAI: boolean;
   reason?: string;
@@ -233,6 +235,7 @@ export type AgenticReview = {
   reviewed?: { readings: number; recs: number; trades: number };
   findings: number;
   alertsRaised: number;
+  items?: AgenticReviewItem[];
 };
 
 /** Run one holistic Groq review over recent activity and raise any findings. */
@@ -270,6 +273,13 @@ export async function runAgenticReview(): Promise<AgenticReview> {
     reviewed: { readings: counts.readings.length, recs: counts.recs.length, trades: counts.trades.length },
     findings: findings.length,
     alertsRaised,
+    items: findings.map((f) => ({
+      type: String(f.type),
+      severity: String(f.severity),
+      ruleId: f.ruleId,
+      subjectType: String(f.subjectType),
+      rationale: String((f.evidence as { rationale?: string }).rationale ?? ""),
+    })),
   };
 }
 
@@ -281,15 +291,39 @@ async function gatherRecContext(recId: string): Promise<{ payload: string; known
   const meter = await MeterModel.findById(rec.meterId).lean();
 
   const knownIds = new Set<string>([String(rec._id), String(rec.meterId)]);
+
+  // Pre-compute every total in code so the model never has to sum rows itself
+  // (LLM arithmetic over dozens of readings produces false over-issuance flags).
+  const claimedKwh = Number((rec.energyMwh * 1000).toFixed(2));
+  const totalExportKwh = Number(readings.reduce((s, r) => s + (r.exportKwh ?? 0), 0).toFixed(2));
+  const totalGenerationKwh = Number(readings.reduce((s, r) => s + (r.generationKwh ?? 0), 0).toFixed(2));
+  const backedKwh = Number(
+    ((rec.backingReadingKwh && rec.backingReadingKwh.length
+      ? rec.backingReadingKwh.reduce((s, k) => s + (k ?? 0), 0)
+      : totalExportKwh)).toFixed(2),
+  );
+  const offlineGenerationCount = readings.filter((r) => r.meterStatus === "offline" && (r.generationKwh ?? 0) > 0).length;
+
   const payload = JSON.stringify({
     rec: {
       recId: String(rec._id),
       serial: rec.serial,
-      energyKwh: Number((rec.energyMwh * 1000).toFixed(2)),
+      claimedKwh,
       meterId: String(rec.meterId),
       solarCapacityKw: meter?.solarCapacityKw ?? null,
     },
-    backingReadings: readings.map((r) => ({
+    // Authoritative, code-computed totals — use these for ALL quantity checks.
+    precomputed: {
+      backingReadingsCount: readings.length,
+      claimedKwh,
+      backedKwh, // metered export actually reserved to back this REC
+      totalExportKwh, // total export across the backing readings
+      totalGenerationKwh,
+      overClaim: claimedKwh > backedKwh + 1e-6, // authoritative over-issuance flag
+      offlineGenerationCount,
+    },
+    // A trimmed sample for qualitative pattern context only (NOT for summing).
+    sampleReadings: readings.slice(0, 20).map((r) => ({
       at: new Date(r.timestamp).toISOString(),
       generationKwh: r.generationKwh,
       exportKwh: r.exportKwh,

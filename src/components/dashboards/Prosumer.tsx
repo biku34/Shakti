@@ -220,8 +220,8 @@ export default function ProsumerDashboard({ feederId }: { feederId: string | nul
                       <Td>
                         {r.currentHolderId === me.data?._id && ["issued", "transferred"].includes(r.status) ? (
                           r.listed ? (
-                            <div className="flex items-center gap-2">
-                              <span className="whitespace-nowrap text-xs text-leaf">Listed · {r.askCreditsPerKwh} cr/kWh</span>
+                            <div className="flex items-center gap-1">
+                              <Btn size="sm" variant="ghost" onClick={() => setListing(r)}>Listed · {r.askCreditsPerKwh} cr/kWh</Btn>
                               <Btn size="sm" variant="ghost" onClick={() => unlist(r._id)}>Unlist</Btn>
                             </div>
                           ) : (
@@ -403,7 +403,7 @@ function HistoryModal({ recId, onClose }: { recId: string; onClose: () => void }
 
 // Holder sets an ask price (cr/kWh) to list a REC on the secondary market.
 function ListModal({ rec, onClose, onDone }: { rec: Rec; onClose: () => void; onDone: (m: string) => void }) {
-  const [price, setPrice] = useState(String(REC_CREDIT_PER_KWH));
+  const [price, setPrice] = useState(String(rec.askCreditsPerKwh ?? REC_CREDIT_PER_KWH));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ask = Number(price) || 0;
@@ -477,7 +477,6 @@ function RecRequestForm({
   const [busy, setBusy] = useState(false);
 
   const requestedKwh = Number(energyKwh) || 0;
-  const estCredits = requestedKwh * REC_CREDIT_PER_KWH;
   // Client-side guard so the prosumer sees the shortfall before the server rejects it.
   const shortfall = requestedKwh > availableSurplusKwh + 1e-6;
   const invalid = requestedKwh <= 0 || shortfall;
@@ -500,10 +499,6 @@ function RecRequestForm({
         <div className="rounded-lg border border-neutral-200 px-3 py-2">
           <div className="text-xs text-neutral-400">Available surplus</div>
           <div className="tabular-nums text-lg font-semibold text-leaf">{availableSurplusKwh.toFixed(2)} <span className="text-xs font-normal text-neutral-400">kWh</span></div>
-        </div>
-        <div className="rounded-lg border border-neutral-200 px-3 py-2">
-          <div className="text-xs text-neutral-400">Resale value (est.)</div>
-          <div className="tabular-nums text-lg font-semibold text-neutral-900">≈ {estCredits.toFixed(2)} <span className="text-xs font-normal text-neutral-400">cr</span></div>
         </div>
         <Field label="Energy (kWh)">
           <input className={inputClass} type="number" step="0.1" min="0" value={energyKwh} onChange={(e) => setEnergyKwh(e.target.value)} required />

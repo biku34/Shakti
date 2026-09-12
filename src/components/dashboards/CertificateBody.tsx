@@ -6,6 +6,7 @@ import {
   Card, Stat, Table, Td, StatusBadge, Btn, TxLink, useApi, useToast,
 } from "@/components/ui";
 
+type RecAiReview = { state: string; severity?: string | null; reason?: string | null; model?: string | null; checkedAt?: string | null };
 type Rec = {
   _id: string;
   serial: string;
@@ -14,6 +15,7 @@ type Rec = {
   issueTxHash: string | null;
   generationWindow: { from: string; to: string };
   backingReadingIds: string[];
+  aiReview?: RecAiReview;
 };
 type Provenance = {
   certificate: Rec;
@@ -32,7 +34,28 @@ export default function CertificateBodyDashboard() {
   const registry = useApi<Rec[]>("/api/rec", 6000);
   const [evidenceId, setEvidenceId] = useState<string | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
+  const [scanBusy, setScanBusy] = useState(false);
+  const scannedRef = useRef(false);
   const evidence = useApi<Provenance>(evidenceId ? `/api/rec/${evidenceId}/provenance` : null);
+
+  // Auto AI-scan the registry: check RECs not yet reviewed (capped server-side),
+  // then refresh so flags appear inline. Runs once per load; re-scan via button.
+  const scanRegistry = useCallback(async (all: boolean) => {
+    setScanBusy(true);
+    try {
+      const r = await api<{ scanned: number; flagged: number }>("/api/rec/registry/ai-scan", { method: "POST", body: all ? { all: true } : {} });
+      if (r.scanned > 0) { registry.refetch(); if (r.flagged > 0) show(`AI registry scan — ${r.flagged} REC(s) flagged`); }
+      else if (all) show("AI registry scan — all RECs already checked");
+    } catch (e) { show(e instanceof Error ? e.message : "Scan failed"); }
+    finally { setScanBusy(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (scannedRef.current || !registry.data) return;
+    const hasUnchecked = registry.data.some((r) => !r.aiReview || r.aiReview.state === "unchecked");
+    if (hasUnchecked) { scannedRef.current = true; scanRegistry(false); }
+  }, [registry.data, scanRegistry]);
 
   const pending = queue.data ?? [];
   const recs = registry.data ?? [];
@@ -141,7 +164,14 @@ export default function CertificateBodyDashboard() {
         {/* ── REC registry — the record of every certificate ──────────── */}
         <Card
           title="REC registry"
-          actions={<span className="text-xs text-neutral-400">{recs.length} total</span>}
+          actions={
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">{recs.length} total</span>
+              <Btn size="sm" variant="ghost" disabled={scanBusy} onClick={() => scanRegistry(true)}>
+                {scanBusy ? "Scanning…" : "AI scan"}
+              </Btn>
+            </div>
+          }
         >
           {recs.length === 0 ? (
             <EmptyState title="No certificates yet" body="Approved RECs are anchored on-chain and listed here." />
@@ -157,6 +187,7 @@ export default function CertificateBodyDashboard() {
                     </div>
                   </div>
                   <div className="flex flex-none items-center gap-2">
+                    <AiFlagBadge review={r.aiReview} />
                     <StatusBadge value={r.status} />
                     <Btn size="sm" variant="ghost" onClick={() => setEvidenceId(r._id)}>Evidence</Btn>
                   </div>
@@ -322,5 +353,19 @@ function AiEvidencePanel({ review, busy, onRerun }: { review: AiReview | null; b
         </ul>
       )}
     </div>
+  );
+}
+
+// Inline AI anomaly flag — shown ONLY when a REC is flagged (no placeholder for
+// clean / unchecked / error rows, to keep the registry uncluttered).
+function AiFlagBadge({ review }: { review?: RecAiReview }) {
+  if (review?.state !== "flagged") return null;
+  return (
+    <span
+      title={review?.reason ?? "AI flagged an anomaly"}
+      className="cursor-help rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800"
+    >
+      ⚠ AI {review?.severity ?? "flag"}
+    </span>
   );
 }

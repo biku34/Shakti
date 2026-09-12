@@ -12,6 +12,7 @@ import { RecTransactionModel } from "@/models/RecTransaction";
 import { UserModel } from "@/models/User";
 import { anchorRecord } from "@/services/blockchain/adapter";
 import { detectOnRec } from "@/services/fraud/detector";
+import { reviewAndFlagRec } from "@/services/fraud/recAiFlag";
 
 const KWH_PER_MWH = 1000;
 
@@ -178,6 +179,8 @@ export async function approveIssuance(
 
   // FR-7.1: run REC-level fraud rules on issuance.
   const alertsRaised = await detectOnRec(recId);
+  // Auto AI anomaly check on state change (pending → issued), non-blocking.
+  void reviewAndFlagRec(recId);
   return { issueTxHash: anchor.txHash, alertsRaised };
 }
 
@@ -239,6 +242,7 @@ export async function transferRec(recId: string, fromId: string, toId: string): 
   clearListing(rec); // ownership changed → any standing listing is void
   await rec.save();
   await RecTransactionModel.create({ recId: rec._id, action: "transfer", fromId, toId, anchorTxHash: anchor.txHash });
+  void reviewAndFlagRec(recId); // auto AI check on transfer
 }
 
 /**
@@ -265,6 +269,7 @@ export async function listRecForSale(
   rec.listedAt = new Date();
   await rec.save();
   await RecTransactionModel.create({ recId: rec._id, action: "list", fromId: holderId, credits: totalCredits });
+  void reviewAndFlagRec(recId); // auto AI check when listed on the market
   return { askCreditsPerKwh: ask, totalCredits };
 }
 
@@ -340,6 +345,7 @@ export async function purchaseRec(
       anchorTxHash: anchor.txHash,
     });
 
+    void reviewAndFlagRec(recId); // auto AI check on sale (ownership change)
     return {
       totalCredits,
       buyerBalance: buyer.creditBalance,

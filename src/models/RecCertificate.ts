@@ -29,6 +29,15 @@ const RecCertificateSchema = new Schema({
   listed: { type: Boolean, default: false },
   askCreditsPerKwh: { type: Number, default: null },
   listedAt: { type: Date, default: null },
+  // Per-REC AI anomaly review, refreshed on each state change (issue / list /
+  // transfer) and by the registry sweep. Surfaced as a flag in the REC registry.
+  aiReview: {
+    state: { type: String, enum: ["unchecked", "clean", "flagged", "error"], default: "unchecked" },
+    severity: { type: String, default: null },
+    reason: { type: String, default: null },
+    model: { type: String, default: null },
+    checkedAt: { type: Date, default: null },
+  },
   issueTxHash: { type: String, default: null },
   contentHash: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },
