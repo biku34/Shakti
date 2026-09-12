@@ -14,6 +14,9 @@
  * anchor and never throws into the core off-chain flow (BC-8, NFR-R1).
  */
 import { createHash } from "crypto";
+import { createWalletClient, createPublicClient, http, type Hex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { polygon, polygonAmoy } from "viem/chains";
 import { connectDB } from "@/lib/db";
 import { env } from "@/lib/env";
 import { BlockchainAnchorModel } from "@/models/BlockchainAnchor";
@@ -96,12 +99,48 @@ function mockSubmit(hash: string): { txHash: string; blockNumber: number } {
 }
 
 // ─── LIVE submission (Alchemy → Polygon Amoy) ───────────────────────
-async function liveSubmit(_hash: string): Promise<{ txHash: string; blockNumber: number }> {
-  // INTEGRATION POINT (BC-5): sign a tx whose calldata carries `_hash` and send
-  // it via Alchemy using viem/ethers + ANCHOR_PRIVATE_KEY, then poll for the
-  // receipt (BC-6). Kept out of the scaffold so it builds with zero secrets.
+
+/** Map the configured network to its viem chain + Alchemy RPC URL. */
+function resolveChain(): { chain: typeof polygonAmoy | typeof polygon; rpcUrl: string } {
+  const network = env.alchemyNetwork();
+  const key = env.alchemyApiKey();
+  switch (network) {
+    case "polygon-amoy":
+      return { chain: polygonAmoy, rpcUrl: `https://polygon-amoy.g.alchemy.com/v2/${key}` };
+    case "polygon-mainnet":
+      return { chain: polygon, rpcUrl: `https://polygon-mainnet.g.alchemy.com/v2/${key}` };
+    default:
+      throw new Error(`Unsupported ALCHEMY_NETWORK: ${network}`);
+  }
+}
+
+/**
+ * Submit the content hash to Polygon via Alchemy (BC-5) and wait for the
+ * receipt (BC-6). The 32-byte hash rides in the calldata of a 0-value
+ * self-transaction, so it is permanently readable on-chain (getTransaction
+ * → input) with no contract to deploy. All signing is server-side (SEC-6).
+ */
+async function liveSubmit(hash: string): Promise<{ txHash: string; blockNumber: number }> {
   if (!env.alchemyApiKey() || !env.anchorPrivateKey()) {
     throw new Error("Live anchoring requires ALCHEMY_API_KEY and ANCHOR_PRIVATE_KEY");
   }
-  throw new Error("Live anchoring not implemented in scaffold — set BLOCKCHAIN_MOCK=true");
+
+  const { chain, rpcUrl } = resolveChain();
+  const account = privateKeyToAccount(env.anchorPrivateKey() as Hex);
+  const transport = http(rpcUrl);
+  const wallet = createWalletClient({ account, chain, transport });
+  const publicClient = createPublicClient({ chain, transport });
+
+  const txHash = await wallet.sendTransaction({
+    to: account.address,
+    value: 0n,
+    data: hash as Hex,
+  });
+
+  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 60_000 });
+  if (receipt.status !== "success") {
+    throw new Error(`Anchor tx reverted: ${txHash}`);
+  }
+
+  return { txHash, blockNumber: Number(receipt.blockNumber) };
 }

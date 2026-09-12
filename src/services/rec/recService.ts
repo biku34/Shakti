@@ -22,6 +22,25 @@ function serialFor(feederCode: string, seq: number): string {
 }
 
 /**
+ * Next serial for a feeder, derived from the highest existing serial for the
+ * current year — NOT a document count, which collides once any REC is deleted
+ * or revoked (the count no longer equals the top sequence number). Serials are
+ * zero-padded and share a fixed prefix, so a lexicographic desc sort finds the
+ * max. Callers retry on the unique-index race for concurrent requests.
+ */
+async function nextSerial(feederCode: string): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = `REC-${feederCode}-${year}-`;
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const last = await RecCertificateModel.findOne({ serial: { $regex: `^${escaped}` } })
+    .sort({ serial: -1 })
+    .select("serial")
+    .lean();
+  const lastSeq = last ? parseInt(String(last.serial).slice(prefix.length), 10) || 0 : 0;
+  return serialFor(feederCode, lastSeq + 1);
+}
+
+/**
  * Create a pending REC for a prosumer's meter, reserving verified un-backed
  * export readings that sum to `energyMwh`. Returns the pending certificate.
  */
@@ -52,43 +71,60 @@ export async function requestIssuance(params: {
     throw new Error(`Insufficient verified export: need ${needKwh} kWh, have ${available.toFixed(3)} kWh`);
   }
 
-  // Reserve backing readings (FR-6.6 / FR-6.7).
+  const feeder = await MeterModel.db.model("Feeder").findById(meter.feederId);
+  const feederCode = (feeder as { code?: string })?.code ?? "GNR";
+
+  // Reserve backing readings (FR-6.6 / FR-6.7). Tracked so we can release them
+  // if the REC can't be created — a failed request must not drain surplus.
   let toBack = needKwh;
   const backingReadingIds: unknown[] = [];
   const backingReadingKwh: number[] = [];
+  const reserved: { id: unknown; take: number }[] = [];
   let from = readings[0].timestamp;
   let to = readings[0].timestamp;
   for (const r of readings) {
     if (toBack <= 1e-6) break;
     const free = r.exportKwh - r.committedExportKwh - r.recBackedKwh;
-    const take = Math.min(free, toBack);
+    const take = Number(Math.min(free, toBack).toFixed(4));
     r.recBackedKwh = Number((r.recBackedKwh + take).toFixed(4));
     await r.save();
+    reserved.push({ id: r._id, take });
     backingReadingIds.push(r._id);
-    backingReadingKwh.push(Number(take.toFixed(4)));
+    backingReadingKwh.push(take);
     if (r.timestamp < from) from = r.timestamp;
     if (r.timestamp > to) to = r.timestamp;
     toBack -= take;
   }
 
-  const seq = (await RecCertificateModel.countDocuments({ feederId: meter.feederId })) + 1;
-  const feeder = await MeterModel.db.model("Feeder").findById(meter.feederId);
-  const feederCode = (feeder as { code?: string })?.code ?? "GNR";
-
-  const rec = await RecCertificateModel.create({
-    serial: serialFor(feederCode, seq),
-    generatorId: params.generatorId,
-    meterId: meter._id,
-    feederId: meter.feederId,
-    energyMwh: params.energyMwh,
-    generationWindow: { from, to },
-    backingReadingIds,
-    backingReadingKwh,
-    status: "pending",
-    currentHolderId: params.generatorId,
-  });
-
-  return { recId: String(rec._id), serial: rec.serial };
+  try {
+    // Retry on the unique-serial race so concurrent requests can't collide.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const rec = await RecCertificateModel.create({
+          serial: await nextSerial(feederCode),
+          generatorId: params.generatorId,
+          meterId: meter._id,
+          feederId: meter.feederId,
+          energyMwh: params.energyMwh,
+          generationWindow: { from, to },
+          backingReadingIds,
+          backingReadingKwh,
+          status: "pending",
+          currentHolderId: params.generatorId,
+        });
+        return { recId: String(rec._id), serial: rec.serial };
+      } catch (err) {
+        if ((err as { code?: number })?.code === 11000 && attempt < 5) continue;
+        throw err;
+      }
+    }
+  } catch (err) {
+    // Release the readings we reserved so the surplus is not silently consumed.
+    for (const rr of reserved) {
+      await MeterReadingModel.updateOne({ _id: rr.id }, { $inc: { recBackedKwh: -rr.take } });
+    }
+    throw err;
+  }
 }
 
 /** Certificate body approves a pending REC → issued + anchored, then scanned (FR-6.2, FR-6.3). */

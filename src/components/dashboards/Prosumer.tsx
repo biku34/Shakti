@@ -50,8 +50,8 @@ function NavIcon({ path }: { path: string }) {
 
 const TABS = [
   { id: "home", label: "Home", icon: <NavIcon path="M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5" /> },
-  { id: "sell", label: "Sell Surplus", icon: <NavIcon path="M13 2 4.5 13.5H11l-1 8.5L19.5 10H13z" /> },
-  { id: "desk", label: "Trading Desk", icon: <NavIcon path="M3 3v18h18M7 15l3.5-4 3 2.5L20 7" /> },
+  { id: "sell", label: "Marketplace", icon: <NavIcon path="M13 2 4.5 13.5H11l-1 8.5L19.5 10H13z" /> },
+  { id: "desk", label: "Transactions", icon: <NavIcon path="M3 3v18h18M7 15l3.5-4 3 2.5L20 7" /> },
   { id: "recs", label: "My RECs", icon: <NavIcon path="M12 21s7-4 7-10V5l-7-2-7 2v6c0 6 7 10 7 10z" /> },
 ];
 
