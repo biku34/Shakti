@@ -62,10 +62,11 @@ function Dot({ color }: { color: string }) {
   return <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />;
 }
 
-// Derive the congestion band live from the current load vs capacity so the
-// dashboard always reflects the <70 / 70–90 / 90–100 / >100 scheme.
-function levelOf(f: { currentLoadKw: number; capacityKw: number }): CongestionLevel {
-  return classifyCongestion(f.currentLoadKw, f.capacityKw);
+// Congestion is detected from the feeder's energy figure (available surplus
+// kWh) vs its capacity (kWh) — the <70 / 70–90 / 90–100 / >100 scheme applied
+// to accumulated surplus injection rather than instantaneous power.
+function levelOf(f: { availableSurplusKwh: number; capacityKw: number }): CongestionLevel {
+  return classifyCongestion(f.availableSurplusKwh, f.capacityKw);
 }
 
 // Compact relative time for the last settlement on a feeder ("3m ago"), or a
@@ -108,7 +109,9 @@ export default function UtilityDashboard() {
     name: z.area,
     capacityKw: z.capacityKw,
     currentLoadKw: z.loadKw,
-    availableSurplusKwh: 0,
+    // Synthetic zones have no meter readings, so their demo load stands in as the
+    // energy figure that drives congestion (keeps the transfer demo colourful).
+    availableSurplusKwh: z.loadKw,
     congestionLevel: classifyCongestion(z.loadKw, z.capacityKw),
     meterCount: 0,
     location: { lat: z.center[0], lng: z.center[1] },
@@ -148,7 +151,7 @@ export default function UtilityDashboard() {
                 <Stat label="Total capacity" value={totalCap.toFixed(0)} unit="kW" />
                 <Stat label="Solar output" value={totalLoad.toFixed(1)} unit="kW" accent="solar" />
                 <Stat label="Available surplus" value={totalSurplus.toFixed(1)} unit="kWh" accent="leaf" />
-                <Stat label="Utilisation" value={totalCap ? ((totalLoad / totalCap) * 100).toFixed(1) : "—"} unit="%" />
+                <Stat label="Utilisation" value={totalCap ? ((totalSurplus / totalCap) * 100).toFixed(1) : "—"} unit="%" />
               </div>
 
               <div className="grid gap-4 lg:grid-cols-[1fr_4fr]">
@@ -163,12 +166,12 @@ export default function UtilityDashboard() {
                     ))}
                   </div>
                   <p className="mt-3 text-xs text-neutral-400">
-                    Bands by live load vs capacity: &lt;70% low congested · 70–90% risky · 90–100% high · &gt;100% critical.
+                    Bands by available surplus vs capacity (kWh): &lt;70% low congested · 70–90% risky · 90–100% high · &gt;100% critical.
                   </p>
                 </Card>
 
                 <Card title="Feeders">
-                  <Table head={["Code", "Name", "Meters", "Solar output kW", "Available surplus kWh", "Capacity kW", "Load %", "Congestion"]} rows={monitorList.length}>
+                  <Table head={["Code", "Name", "Meters", "Solar output kW", "Available surplus kWh", "Capacity kWh", "Load %", "Congestion"]} rows={monitorList.length}>
                     {monitorList.map((f) => {
                       const lvl = levelOf(f);
                       return (
@@ -179,7 +182,7 @@ export default function UtilityDashboard() {
                           <Td className="tabular-nums">{f.currentLoadKw.toFixed(1)}</Td>
                           <Td className="tabular-nums font-medium text-leaf">{(f.availableSurplusKwh ?? 0).toFixed(1)}</Td>
                           <Td className="tabular-nums">{f.capacityKw}</Td>
-                          <Td className="tabular-nums">{utilisationPct(f.currentLoadKw, f.capacityKw).toFixed(1)}%</Td>
+                          <Td className="tabular-nums">{utilisationPct(f.availableSurplusKwh, f.capacityKw).toFixed(1)}%</Td>
                           <Td><StatusBadge value={lvl} label={CONGESTION_LABEL[lvl]} /></Td>
                         </tr>
                       );

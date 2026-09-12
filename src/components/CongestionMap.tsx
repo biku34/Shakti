@@ -190,9 +190,10 @@ export default function CongestionMap({
 
         {/* Live feeders from the DB, drawn as coverage circles + labelled markers. */}
         {feeders.map((f) => {
-          const level = classifyCongestion(f.currentLoadKw, f.capacityKw);
+          // Congestion detected from accumulated available surplus (kWh) vs capacity.
+          const level = classifyCongestion(f.availableSurplusKwh, f.capacityKw);
           const color = CONGESTION_COLOR[level];
-          const util = f.capacityKw ? f.currentLoadKw / f.capacityKw : 0;
+          const util = f.capacityKw ? f.availableSurplusKwh / f.capacityKw : 0;
           const center: [number, number] = [f.location.lat, f.location.lng];
           return (
             <Fragment key={f._id}>
@@ -212,12 +213,14 @@ export default function CongestionMap({
                 <Popup>
                   <div className="space-y-1 text-sm">
                     <div className="font-semibold">{f.name}</div>
-                    <div>Load: {f.currentLoadKw.toFixed(1)} / {f.capacityKw} kWh</div>
-                    <div>Utilisation: {(util * 100).toFixed(1)}%</div>
                     <div>
                       Available surplus:{" "}
-                      <span className="font-semibold text-green-700">{f.availableSurplusKwh.toFixed(1)} kWh</span>
+                      <span className="font-semibold text-green-700">
+                        {f.availableSurplusKwh.toFixed(1)} / {f.capacityKw} kWh
+                      </span>
                     </div>
+                    <div>Utilisation: {(util * 100).toFixed(1)}%</div>
+                    <div>Solar output: {f.currentLoadKw.toFixed(1)} kW</div>
                     <div className="capitalize">
                       Congestion: <span style={{ color }}>{CONGESTION_LABEL[level]}</span>
                     </div>
