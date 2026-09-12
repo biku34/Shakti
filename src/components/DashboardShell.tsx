@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { api } from "@/lib/client";
 import { useApi } from "@/components/ui";
 import type { Role } from "@/lib/roles";
@@ -33,7 +33,7 @@ type MeterProfile = { meters: { code: string }[] };
 type Feeder = { _id: string; code: string; name: string };
 
 export default function DashboardShell({ role, feederId }: { role: Role; feederId: string | null }) {
-  const router = useRouter();
+  const [signingOut, setSigningOut] = useState(false);
   const { data: me } = useApi<Me>("/api/me", 5000);
   const { data: meterProfile } = useApi<MeterProfile>(role === "prosumer" ? "/api/meters/mine" : null, 10000);
   const { data: feeders } = useApi<Feeder[]>(feederId ? "/api/feeders" : null, 30000);
@@ -42,8 +42,16 @@ export default function DashboardShell({ role, feederId }: { role: Role; feederI
   const feederCode = feeders?.find((f) => f._id === feederId)?.code ?? null;
 
   async function logout() {
-    await api("/api/auth/logout", { method: "POST" });
-    router.push("/login");
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Navigate away regardless so the user is never left stuck signed-in.
+    }
+    // Hard navigation clears the client router cache, stops the live polls, and
+    // re-runs the server auth guard — so sign-out is immediate and clean.
+    window.location.href = "/login";
   }
 
   const showCredits = role === "prosumer" || role === "consumer";
@@ -90,9 +98,10 @@ export default function DashboardShell({ role, feederId }: { role: Role; feederI
             </div>
             <button
               onClick={logout}
-              className="rounded-lg border border-neutral-300 px-3 py-1.5 text-neutral-600 transition hover:bg-neutral-50"
+              disabled={signingOut}
+              className="rounded-lg border border-neutral-300 px-3 py-1.5 text-neutral-600 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Sign out
+              {signingOut ? "Signing out…" : "Sign out"}
             </button>
           </div>
         </div>
