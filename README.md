@@ -15,7 +15,7 @@ Built to the [SRS v1.0](#) — see requirement tags (FR-x, BC-x, SEC-x) in the c
 | Persistence | **MongoDB Atlas** (Mongoose) |
 | Trust layer | **Polygon Amoy** via **Alchemy** + **viem** — anchoring only, **server-side** (no browser web3, DC-2) |
 | Meter data | **In-process Node simulator** (control panel at `/smart`) emitting the §7.3 ingestion contract |
-| Intelligence | **Rule engine** (pricing §9.1, detection §9.2) plus an optional **Groq** agentic fraud-review pass |
+| Intelligence | Layered: **rule engine** (pricing §9.1, detection R-01–R-08) + a **statistical anomaly detector** (R-09, robust modified z-score) + an optional **Groq** agentic fraud-review pass + optional **Google Gemini** feeder-congestion recommendations |
 
 ## Project layout
 
@@ -29,10 +29,10 @@ src/
   services/
     trading/           pricing.ts (§9.1), matching.ts (§6.5)
     rec/               recService.ts (§6.6 lifecycle)
-    fraud/             detector.ts (§9.2 rules R-01..R-08), statistical.ts (R-09 robust z-score anomaly), groqDetector.ts (agentic AI review)
+    fraud/             detector.ts (§9.2 rules R-01..R-08), statistical.ts (R-09 robust z-score anomaly), groqDetector.ts (Groq agentic review + per-REC evidence review)
+    ai/                recommendations.ts (Gemini feeder-congestion priority actions, rule-based fallback)
     blockchain/        adapter.ts (§8 anchor/verify), hash.ts (canonical sha256)
     audit.ts           append-only audit log
-    services/
     simulator/         engine.ts — in-process bidirectional smart-meter simulator
     ingest/            ingestReadings.ts — shared reading-ingestion core
 data/gandhinagar.json  shared demo topology (seed + simulator read this)
@@ -55,7 +55,13 @@ in `src/services/blockchain/adapter.ts` submits the content hash as calldata to
 Polygon Amoy via viem and waits for the receipt.
 
 Optionally set `GROQ_API_KEY` (or a comma-separated `GROQ_API_KEYS` pool) to enable
-the agentic AI fraud-review pass in the regulator dashboard.
+the Groq agentic fraud-review pass — both the regulator's batch review and the
+certificate body's per-REC evidence check on un-anchored certificates.
+
+Optionally set `GEMINI_API_KEYS` (comma-separated Google AI Studio keys) and
+`GEMINI_MODEL` (default `gemini-3.6-flash`) to enable the AI feeder-congestion
+recommendations on the utility dashboard. Without a key, that panel falls back to
+a deterministic severity ranking, so it always renders.
 
 ### 2. Seed the demo data
 
@@ -91,9 +97,9 @@ Control API (same-origin): `GET /api/smart/state`, `POST /api/smart/meter`
 | Auth | `POST /api/auth/register` · `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/me` |
 | Ingestion | `POST /api/ingest/readings` (service token) |
 | Trading | `GET /api/feeders/:id/orderbook` · `GET /api/feeders/:id/price` · `POST/DELETE /api/offers[/:id]` · `POST/DELETE /api/bids[/:id]` · `GET /api/trades/mine` |
-| REC | `POST /api/rec/request` · `GET /api/rec/issuance-queue` · `POST /api/rec/:id/{approve,transfer,retire,revoke}` · `GET /api/rec/:id/provenance` |
+| REC | `POST /api/rec/request` · `GET /api/rec/issuance-queue` · `POST /api/rec/:id/{approve,transfer,retire,revoke}` · `GET /api/rec/:id/provenance` · `POST /api/rec/:id/ai-review` (Groq per-REC evidence review) |
 | Fraud | `GET /api/fraud/alerts` · `POST /api/fraud/alerts/:id/status` · `POST /api/fraud/scan` · `POST /api/fraud/ai-scan` (Groq agentic review) |
-| Oversight | `GET /api/utility/feeders` · `GET /api/reports/market` · `GET /api/audit/export` · `GET /api/verify/:refType/:refId` |
+| Oversight | `GET /api/utility/feeders` · `POST /api/utility/recommendations` (Gemini priority actions) · `GET /api/reports/market` · `GET /api/audit/export` · `GET /api/verify/:refType/:refId` |
 
 ## Demo flow (Appendix C)
 
@@ -109,8 +115,10 @@ Control API (same-origin): `GET /api/smart/state`, `POST /api/smart/meter`
 **Wired & functional:** auth/RBAC, ingestion + validation, dynamic pricing, order book,
 matching & settlement, REC lifecycle, fraud rules R-01..R-08, the R-09 statistical
 anomaly detector (robust modified z-score per meter baseline), the Groq agentic fraud
-review, **live Polygon Amoy anchoring** (viem + Alchemy) with mock fallback, all six role
-dashboards, audit log, oversight reports, the simulator.
+review (batch + per-REC evidence review of un-anchored certificates), the Gemini
+feeder-congestion recommendations (with deterministic fallback), **live Polygon Amoy
+anchoring** (viem + Alchemy) with mock fallback, all six role dashboards, audit log,
+oversight reports, the simulator.
 
 **Remaining polish:** live polling/SSE widgets (NFR-P2) in place of the current interval
 refresh, and asynchronous anchor confirmation (anchoring currently waits for the receipt
