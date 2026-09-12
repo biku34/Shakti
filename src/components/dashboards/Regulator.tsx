@@ -119,40 +119,13 @@ export default function RegulatorDashboard() {
           )}
 
           {active === "fraud" && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-neutral-500">{openAlerts.length} open · {alerts.data?.length ?? 0} total</p>
-                <Btn size="sm" onClick={scan}>Run full scan</Btn>
-              </div>
-              <Card title="Fraud alerts">
-                <Table head={["Rule", "Type", "Severity", "Subject", "Evidence", "Status", "Actions"]} rows={alerts.data?.length ?? 0} empty="No alerts — inject a fault in the simulator.">
-                  {alerts.data?.map((a) => (
-                    <tr key={a._id}>
-                      <Td className="font-mono text-xs">{a.ruleId}</Td>
-                      <Td>{a.type}</Td>
-                      <Td><StatusBadge value={a.severity} /></Td>
-                      <Td className="text-xs text-neutral-500">{a.subjectType}</Td>
-                      <Td className="max-w-xs truncate font-mono text-xs text-neutral-400" title={JSON.stringify(a.evidence)}>{JSON.stringify(a.evidence)}</Td>
-                      <Td><StatusBadge value={a.status} /></Td>
-                      <Td>
-                        <div className="flex gap-1">
-                          {a.status === "open" && <Btn size="sm" variant="ghost" onClick={() => setStatus(a._id, "investigating")}>Investigate</Btn>}
-                          {["open", "investigating"].includes(a.status) && (
-                            <>
-                              <Btn size="sm" variant="danger" onClick={() => setStatus(a._id, "confirmed")}>Confirm</Btn>
-                              <Btn size="sm" variant="ghost" onClick={() => setStatus(a._id, "dismissed")}>Dismiss</Btn>
-                            </>
-                          )}
-                          {a.subjectType === "rec" && a.status === "confirmed" && (
-                            <Btn size="sm" variant="danger" onClick={() => revoke(a.subjectId)}>Revoke REC</Btn>
-                          )}
-                        </div>
-                      </Td>
-                    </tr>
-                  ))}
-                </Table>
-              </Card>
-            </div>
+            <AlertsPanel
+              alerts={alerts.data ?? []}
+              loading={alerts.loading && !alerts.data}
+              onStatus={setStatus}
+              onRevoke={revoke}
+              onScan={scan}
+            />
           )}
 
           {active === "compliance" && (
@@ -391,6 +364,166 @@ function FeederTerminal({ f, onDone }: { f: FeederCtl; onDone: (msg: string) => 
         </div>
       </div>
     </section>
+  );
+}
+
+// ─── Fraud alerting console ─────────────────────────────────────────────
+const SEVERITY: Record<string, { bar: string; chip: string; dot: string }> = {
+  critical: { bar: "border-l-red-600", chip: "bg-red-100 text-red-800", dot: "bg-red-600" },
+  high: { bar: "border-l-orange-500", chip: "bg-orange-100 text-orange-800", dot: "bg-orange-500" },
+  medium: { bar: "border-l-amber-500", chip: "bg-amber-100 text-amber-800", dot: "bg-amber-500" },
+  risky: { bar: "border-l-orange-500", chip: "bg-orange-100 text-orange-800", dot: "bg-orange-500" },
+  low: { bar: "border-l-blue-400", chip: "bg-blue-100 text-blue-800", dot: "bg-blue-400" },
+};
+const SEV_RANK: Record<string, number> = { critical: 4, high: 3, risky: 3, medium: 2, low: 1 };
+const ALERT_FILTERS = ["all", "open", "investigating", "confirmed", "dismissed"] as const;
+
+const titleCase = (s: string) => s.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+function evidencePairs(ev: Record<string, unknown>): [string, string][] {
+  return Object.entries(ev ?? {}).slice(0, 6).map(([k, v]) => {
+    const val = typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v);
+    return [titleCase(k), val];
+  });
+}
+
+function AlertsPanel({
+  alerts, loading, onStatus, onRevoke, onScan,
+}: {
+  alerts: Alert[]; loading: boolean;
+  onStatus: (id: string, status: string) => void;
+  onRevoke: (subjectId: string) => void;
+  onScan: () => void;
+}) {
+  const [filter, setFilter] = useState<(typeof ALERT_FILTERS)[number]>("all");
+
+  const open = alerts.filter((a) => ["open", "investigating"].includes(a.status));
+  const sevCount = (s: string) => open.filter((a) => (a.severity === s) || (s === "high" && a.severity === "risky")).length;
+
+  const filtered = alerts
+    .filter((a) => filter === "all" || a.status === filter)
+    .sort((a, b) => (SEV_RANK[b.severity] ?? 0) - (SEV_RANK[a.severity] ?? 0) || +new Date(b.createdAt) - +new Date(a.createdAt));
+
+  const statusCount = (s: string) => (s === "all" ? alerts.length : alerts.filter((a) => a.status === s).length);
+
+  return (
+    <div className="space-y-5">
+      {/* Severity summary + scan */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-baseline gap-1.5">
+            <span className={`text-2xl font-bold tabular-nums ${open.length ? "text-red-600" : "text-green-600"}`}>{open.length}</span>
+            <span className="text-xs font-medium uppercase tracking-wide text-neutral-400">open</span>
+          </div>
+          <span className="mx-1 h-8 w-px bg-neutral-200" />
+          {(["critical", "high", "medium"] as const).map((s) => (
+            <span key={s} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${sevCount(s) ? SEVERITY[s].chip : "bg-neutral-100 text-neutral-400"}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${sevCount(s) ? SEVERITY[s].dot : "bg-neutral-300"}`} />
+              {sevCount(s)} {titleCase(s)}
+            </span>
+          ))}
+        </div>
+        <Btn size="sm" onClick={onScan}><IconRadar /><span className="ml-1.5">Run full scan</span></Btn>
+      </div>
+
+      {/* Status filter */}
+      <div className="flex flex-wrap gap-1.5">
+        {ALERT_FILTERS.map((s) => (
+          <button
+            key={s}
+            onClick={() => setFilter(s)}
+            className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
+              filter === s ? "bg-neutral-900 text-white" : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200"
+            }`}
+          >
+            {s} <span className={filter === s ? "text-neutral-400" : "text-neutral-400"}>· {statusCount(s)}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Alert list */}
+      {loading ? (
+        <div className="rounded-2xl border border-neutral-200 bg-white py-12 text-center text-sm text-neutral-400 shadow-sm">Loading alerts…</div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-neutral-200 bg-white py-12 text-center shadow-sm">
+          <div className="text-sm font-medium text-neutral-600">No {filter === "all" ? "" : filter} alerts</div>
+          <p className="mt-1 text-xs text-neutral-400">Inject a fault from the simulator to raise one.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map((a) => (
+            <AlertCard key={a._id} a={a} onStatus={onStatus} onRevoke={onRevoke} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AlertCard({
+  a, onStatus, onRevoke,
+}: {
+  a: Alert; onStatus: (id: string, status: string) => void; onRevoke: (subjectId: string) => void;
+}) {
+  const sev = SEVERITY[a.severity] ?? SEVERITY.low;
+  const resolved = ["confirmed", "dismissed"].includes(a.status);
+  const pairs = evidencePairs(a.evidence);
+
+  return (
+    <div className={`rounded-xl border border-l-4 border-neutral-200 bg-white p-4 shadow-sm transition hover:shadow-md ${sev.bar} ${resolved ? "opacity-75" : ""}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${sev.chip}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${sev.dot}`} />{a.severity}
+            </span>
+            <h4 className="truncate text-sm font-semibold text-neutral-900">{titleCase(a.type)}</h4>
+            <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[10px] text-neutral-500">{a.ruleId}</span>
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-xs text-neutral-500">
+            <span className="capitalize">{a.subjectType}</span>
+            <span className="font-mono text-neutral-400">{a.subjectId.slice(-8)}</span>
+            <span className="text-neutral-300">·</span>
+            <span>{fmtTime(a.createdAt)}</span>
+          </div>
+        </div>
+        <StatusBadge value={a.status} />
+      </div>
+
+      {pairs.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {pairs.map(([k, v]) => (
+            <span key={k} className="inline-flex items-center gap-1 rounded-md bg-neutral-50 px-2 py-1 text-[11px] text-neutral-600 ring-1 ring-inset ring-neutral-100">
+              <span className="text-neutral-400">{k}</span>
+              <span className="font-semibold tabular-nums text-neutral-800">{v}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {!resolved && (
+        <div className="mt-3 flex flex-wrap gap-2 border-t border-neutral-100 pt-3">
+          {a.status === "open" && (
+            <Btn size="sm" variant="ghost" onClick={() => onStatus(a._id, "investigating")}>Investigate</Btn>
+          )}
+          <Btn size="sm" variant="danger" onClick={() => onStatus(a._id, "confirmed")}>Confirm fraud</Btn>
+          <Btn size="sm" variant="ghost" onClick={() => onStatus(a._id, "dismissed")}>Dismiss</Btn>
+        </div>
+      )}
+      {a.subjectType === "rec" && a.status === "confirmed" && (
+        <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-red-50 px-3 py-2">
+          <span className="text-xs font-medium text-red-700">Fraud confirmed — the backing REC can be revoked on-chain.</span>
+          <Btn size="sm" variant="danger" onClick={() => onRevoke(a.subjectId)}>Revoke REC</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IconRadar() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M19.07 4.93A10 10 0 1 0 22 12" /><path d="M12 12 2 12" opacity="0" /><path d="M12 12l6-6" /><circle cx="12" cy="12" r="2" />
+    </svg>
   );
 }
 
