@@ -37,31 +37,54 @@ function TransferControl({
   onTransfer: (opt: TransferOption<Zone>) => void;
 }) {
   const [idx, setIdx] = useState(0);
-  const opt = options[Math.min(idx, options.length - 1)];
+  const selected = Math.min(idx, options.length - 1);
+  const opt = options[selected];
   return (
-    <div className="mt-2 border-t border-neutral-200 pt-2">
-      <div className="mb-1 text-xs font-semibold text-neutral-700">Relieve via tie-switch transfer</div>
-      <select
-        value={idx}
-        onChange={(e) => setIdx(Number(e.target.value))}
-        className="w-full rounded border border-neutral-300 px-1.5 py-1 text-xs"
-      >
-        {options.map((o, i) => (
-          <option key={o.target.id} value={i}>
-            → {o.target.area}: move {o.transferKw} kW
-          </option>
-        ))}
-      </select>
-      <div className="mt-1 text-[11px] leading-snug text-neutral-500">
-        This zone {opt.source.before.toFixed(0)}% → <b>{opt.source.after.toFixed(0)}%</b>
+    <div className="mt-2.5 border-t border-neutral-200 pt-2.5">
+      <div className="mb-1.5 text-xs font-semibold text-neutral-700">Relieve via tie-switch transfer</div>
+
+      {/* Selectable target list — one clean row per tie-adjacent feeder. */}
+      <div className="flex flex-col gap-1" role="radiogroup" aria-label="Transfer target">
+        {options.map((o, i) => {
+          const active = i === selected;
+          return (
+            <button
+              key={o.target.id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => setIdx(i)}
+              className={`flex w-full items-center justify-between gap-3 rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${
+                active
+                  ? "border-red-300 bg-red-50 ring-1 ring-red-200"
+                  : "border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50"
+              }`}
+            >
+              <span className="flex items-center gap-1.5 font-medium text-neutral-800">
+                <span
+                  className={`h-2 w-2 flex-none rounded-full border ${
+                    active ? "border-red-500 bg-red-500" : "border-neutral-300"
+                  }`}
+                />
+                {o.target.area}
+              </span>
+              <span className="flex-none tabular-nums text-neutral-500">move {o.transferKw} kWh</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-2 rounded-md bg-neutral-50 px-2.5 py-1.5 text-[11px] leading-snug text-neutral-600">
+        This zone {opt.source.before.toFixed(0)}% → <b className="text-neutral-900">{opt.source.after.toFixed(0)}%</b>
         <br />
-        {opt.target.area} {opt.dest.before.toFixed(0)}% → <b>{opt.dest.after.toFixed(0)}%</b>{" "}
+        {opt.target.area} {opt.dest.before.toFixed(0)}% → <b className="text-neutral-900">{opt.dest.after.toFixed(0)}%</b>{" "}
         ({CONGESTION_LABEL[opt.destLevelAfter]})
       </div>
+
       <button
         type="button"
         onClick={() => onTransfer(opt)}
-        className="mt-1.5 w-full rounded bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700"
+        className="mt-2 w-full rounded-lg bg-red-600 px-2 py-1.5 text-xs font-semibold text-white transition hover:bg-red-700"
       >
         Confirm transfer
       </button>
@@ -96,7 +119,7 @@ function ZoneCircle({
           <div className="font-semibold">
             {z.area} <span className="font-normal text-neutral-400">({z.code})</span>
           </div>
-          <div>Load: {z.loadKw.toFixed(1)} / {z.capacityKw} kW</div>
+          <div>Load: {z.loadKw.toFixed(1)} / {z.capacityKw} kWh</div>
           <div>Utilisation: {pct}%</div>
           <div className="capitalize">
             Congestion: <span style={{ color }}>{CONGESTION_LABEL[level]}</span>
@@ -189,7 +212,7 @@ export default function CongestionMap({
                 <Popup>
                   <div className="space-y-1 text-sm">
                     <div className="font-semibold">{f.name}</div>
-                    <div>Load: {f.currentLoadKw.toFixed(1)} / {f.capacityKw} kW</div>
+                    <div>Load: {f.currentLoadKw.toFixed(1)} / {f.capacityKw} kWh</div>
                     <div>Utilisation: {(util * 100).toFixed(1)}%</div>
                     <div>
                       Available surplus:{" "}
