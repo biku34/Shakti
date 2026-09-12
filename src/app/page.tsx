@@ -70,9 +70,9 @@ export default function Home() {
             Gandhinagar · Pilot Grid
           </p>
           <h1 className="mt-3 text-4xl font-bold leading-[1.1] tracking-tight text-blue-950 sm:text-5xl">
-            Trade clean energy.
+            Power to the people.
             <br />
-            <span className="text-leaf">Certify every kilowatt-hour.</span>
+            <span className="text-leaf">Literally.</span>
           </h1>
           <p className="mt-4 max-w-lg text-[15px] font-medium leading-relaxed text-blue-900/90">
             One stack where metered rooftop-solar drives a peer-to-peer marketplace
