@@ -74,7 +74,7 @@ export default function Home() {
             <br />
             <span className="text-leaf">Literally.</span>
           </h1>
-          <p className="mt-4 max-w-lg text-[15px] font-medium leading-relaxed text-blue-900/90">
+          <p className="mt-4 max-w-lg text-lg font-medium leading-relaxed text-blue-900/90">
             Trade energy directly with neighbours and the industry.
           </p>
 
