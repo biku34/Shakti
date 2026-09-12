@@ -26,7 +26,7 @@ export function classifyCongestion(loadKw: number, capacityKw: number): Congesti
 
 /** Human-readable label for a congestion level. */
 export const CONGESTION_LABEL: Record<CongestionLevel, string> = {
-  low: "low congested",
+  low: "low",
   risky: "risky",
   high: "high",
   critical: "critical",

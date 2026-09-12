@@ -166,7 +166,7 @@ export default function UtilityDashboard() {
                     ))}
                   </div>
                   <p className="mt-3 text-xs text-neutral-400">
-                    Bands by available surplus vs capacity (kWh): &lt;70% low congested · 70–90% risky · 90–100% high · &gt;100% critical.
+                    Bands by available surplus vs capacity (kWh): &lt;70% low · 70–90% risky · 90–100% high · &gt;100% critical.
                   </p>
                 </Card>
 
