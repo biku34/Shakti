@@ -273,6 +273,80 @@ export async function runAgenticReview(): Promise<AgenticReview> {
   };
 }
 
+/** Build the compact single-REC payload the model reviews (shared by scanRec + reviewRecEvidence). */
+async function gatherRecContext(recId: string): Promise<{ payload: string; knownIds: Set<string> } | null> {
+  const rec = await RecCertificateModel.findById(recId).lean();
+  if (!rec) return null;
+  const readings = await MeterReadingModel.find({ _id: { $in: rec.backingReadingIds } }).lean();
+  const meter = await MeterModel.findById(rec.meterId).lean();
+
+  const knownIds = new Set<string>([String(rec._id), String(rec.meterId)]);
+  const payload = JSON.stringify({
+    rec: {
+      recId: String(rec._id),
+      serial: rec.serial,
+      energyKwh: Number((rec.energyMwh * 1000).toFixed(2)),
+      meterId: String(rec.meterId),
+      solarCapacityKw: meter?.solarCapacityKw ?? null,
+    },
+    backingReadings: readings.map((r) => ({
+      at: new Date(r.timestamp).toISOString(),
+      generationKwh: r.generationKwh,
+      exportKwh: r.exportKwh,
+      status: r.meterStatus,
+      verified: r.verified,
+    })),
+  });
+  return { payload, knownIds };
+}
+
+export type RecEvidenceReview = {
+  usedAI: boolean;
+  reason?: string;
+  model?: string;
+  findings: { type: string; severity: string; ruleId: string; rationale: string; confidence?: number }[];
+};
+
+/**
+ * On-demand AI review of ONE certificate's backing evidence, for the issuance
+ * queue. When a REC isn't anchored on-chain yet there is no hash to verify, so
+ * the certificate body instead has Groq scan the raw backing readings for
+ * anomalies before deciding to approve. Returns findings for display (it does
+ * not raise pipeline alerts) and degrades gracefully when Groq is unavailable.
+ */
+export async function reviewRecEvidence(recId: string): Promise<RecEvidenceReview> {
+  await connectDB();
+  if (!isGroqConfigured()) {
+    return { usedAI: false, reason: "AI review not configured (set GROQ_API_KEYS)", findings: [] };
+  }
+  const ctx = await gatherRecContext(recId);
+  if (!ctx) return { usedAI: false, reason: "REC not found", findings: [] };
+
+  let content: string;
+  try {
+    content = await callGroq([
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: `Assess this single REC and its backing readings:\n${ctx.payload}` },
+    ]);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "AI review failed";
+    const rateLimited = /429/.test(msg);
+    return {
+      usedAI: false,
+      reason: rateLimited ? "AI review is rate-limited — try again in a minute" : `AI review unavailable: ${msg}`,
+      findings: [],
+    };
+  }
+  const findings = parseFindings(content, ctx.knownIds).map((f) => ({
+    type: String(f.type),
+    severity: String(f.severity),
+    ruleId: f.ruleId,
+    rationale: String((f.evidence as { rationale?: string }).rationale ?? ""),
+    confidence: (f.evidence as { confidence?: number }).confidence,
+  }));
+  return { usedAI: true, model: env.groqModel(), findings };
+}
+
 /**
  * Swappable agentic detector (FR-7.8). `scanRec` runs a Groq review of a single
  * certificate; `scanReading` is intentionally a no-op — per-reading LLM calls
@@ -287,35 +361,14 @@ export class GroqAgenticDetector implements IAnomalyDetector {
   async scanRec(recId: string): Promise<Finding[]> {
     await connectDB();
     if (!isGroqConfigured()) return [];
-    const rec = await RecCertificateModel.findById(recId).lean();
-    if (!rec) return [];
-    const readings = await MeterReadingModel.find({ _id: { $in: rec.backingReadingIds } }).lean();
-    const meter = await MeterModel.findById(rec.meterId).lean();
-
-    const knownIds = new Set<string>([String(rec._id), String(rec.meterId)]);
-    const payload = JSON.stringify({
-      rec: {
-        recId: String(rec._id),
-        serial: rec.serial,
-        energyKwh: Number((rec.energyMwh * 1000).toFixed(2)),
-        meterId: String(rec.meterId),
-        solarCapacityKw: meter?.solarCapacityKw ?? null,
-      },
-      backingReadings: readings.map((r) => ({
-        at: new Date(r.timestamp).toISOString(),
-        generationKwh: r.generationKwh,
-        exportKwh: r.exportKwh,
-        status: r.meterStatus,
-        verified: r.verified,
-      })),
-    });
-
+    const ctx = await gatherRecContext(recId);
+    if (!ctx) return [];
     try {
       const content = await callGroq([
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: `Assess this single REC and its backing readings:\n${payload}` },
+        { role: "user", content: `Assess this single REC and its backing readings:\n${ctx.payload}` },
       ]);
-      return parseFindings(content, knownIds);
+      return parseFindings(content, ctx.knownIds);
     } catch {
       return [];
     }

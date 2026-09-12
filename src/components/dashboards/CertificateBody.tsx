@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import {
   Card, Stat, Table, Td, StatusBadge, Btn, TxLink, useApi, useToast,
@@ -20,6 +20,8 @@ type Provenance = {
   backingReadings: { _id: string; timestamp: string; exportKwh: number; generationKwh: number; verified: boolean }[];
   verification: { verified: boolean; expected: string; actual: string; txHash: string | null };
 };
+type AiFinding = { type: string; severity: string; ruleId: string; rationale: string; confidence?: number };
+type AiReview = { usedAI: boolean; reason?: string; model?: string; findings: AiFinding[] };
 
 const kwh = (mwh: number) => (mwh * 1000).toFixed(1);
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
@@ -34,6 +36,38 @@ export default function CertificateBodyDashboard() {
 
   const pending = queue.data ?? [];
   const recs = registry.data ?? [];
+
+  // AI evidence reviews, prefetched per pending REC so the modal opens instantly.
+  // Un-anchored queue RECs have no on-chain hash to verify, so Groq scans their
+  // backing readings in the background as soon as the queue loads.
+  const [aiReviews, setAiReviews] = useState<Record<string, AiReview>>({});
+  const [aiBusy, setAiBusy] = useState<Record<string, boolean>>({});
+  const inFlight = useRef<Set<string>>(new Set());
+
+  const reviewRec = useCallback(async (id: string) => {
+    if (inFlight.current.has(id)) return;
+    inFlight.current.add(id);
+    setAiBusy((b) => ({ ...b, [id]: true }));
+    try {
+      const r = await api<AiReview>(`/api/rec/${id}/ai-review`, { method: "POST" });
+      setAiReviews((m) => ({ ...m, [id]: r }));
+    } catch (e) {
+      setAiReviews((m) => ({ ...m, [id]: { usedAI: false, reason: e instanceof Error ? e.message : "AI review failed", findings: [] } }));
+    } finally {
+      inFlight.current.delete(id);
+      setAiBusy((b) => ({ ...b, [id]: false }));
+    }
+  }, []);
+
+  // Prefetch reviews for the first few pending RECs (capped to bound Groq usage);
+  // the rest review lazily when their evidence modal is opened. Guarded so the
+  // queue's 5s poll never re-triggers a completed review.
+  const PREFETCH_LIMIT = 2;
+  useEffect(() => {
+    for (const r of pending.slice(0, PREFETCH_LIMIT)) {
+      if (!aiReviews[r._id] && !inFlight.current.has(r._id)) reviewRec(r._id);
+    }
+  }, [pending, aiReviews, reviewRec]);
 
   async function approve(id: string) {
     setApproving(id);
@@ -134,7 +168,13 @@ export default function CertificateBodyDashboard() {
       </div>
 
       {evidenceId && (
-        <EvidenceModal prov={evidence.data ?? null} onClose={() => setEvidenceId(null)} />
+        <EvidenceModal
+          prov={evidence.data ?? null}
+          review={aiReviews[evidenceId] ?? null}
+          busy={!!aiBusy[evidenceId]}
+          onRerun={() => reviewRec(evidenceId)}
+          onClose={() => setEvidenceId(null)}
+        />
       )}
       {node}
     </div>
@@ -151,7 +191,23 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 }
 
 // Inline provenance viewer — the backing readings that justify a certificate.
-function EvidenceModal({ prov, onClose }: { prov: Provenance | null; onClose: () => void }) {
+// The AI review is prefetched by the dashboard and passed in, so the modal opens
+// instantly; `onRerun` is a fallback for the rare case it wasn't prefetched yet.
+function EvidenceModal({
+  prov, review, busy, onRerun, onClose,
+}: {
+  prov: Provenance | null;
+  review: AiReview | null;
+  busy: boolean;
+  onRerun: () => void;
+  onClose: () => void;
+}) {
+  const anchored = !!prov?.verification.txHash;
+
+  useEffect(() => {
+    if (prov && !anchored && !review && !busy) onRerun();
+  }, [prov, anchored, review, busy, onRerun]);
+
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div
@@ -174,10 +230,15 @@ function EvidenceModal({ prov, onClose }: { prov: Provenance | null; onClose: ()
 
         {prov && (
           <>
-            <div className={`mb-4 flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${prov.verification.verified ? "bg-green-50 text-green-800" : "bg-red-50 text-red-700"}`}>
-              <StatusBadge value={prov.verification.verified ? "issued" : "failed"} />
-              <span>{prov.verification.verified ? "Hash matches on-chain anchor" : "Not yet anchored / hash mismatch"}</span>
-            </div>
+            {anchored ? (
+              <div className={`mb-4 flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${prov.verification.verified ? "bg-green-50 text-green-800" : "bg-red-50 text-red-700"}`}>
+                <StatusBadge value={prov.verification.verified ? "issued" : "failed"} />
+                <span>{prov.verification.verified ? "Hash matches on-chain anchor" : "Hash mismatch — record differs from its anchor"}</span>
+                <span className="ml-auto"><TxLink hash={prov.verification.txHash!} /></span>
+              </div>
+            ) : (
+              <AiEvidencePanel review={review} busy={busy} onRerun={onRerun} />
+            )}
             <div className="mb-4 grid gap-4 sm:grid-cols-3">
               <Stat label="Serial" value={<span className="font-mono text-sm">{prov.certificate.serial}</span>} />
               <Stat label="Claimed" value={kwh(prov.certificate.energyMwh)} unit="kWh" />
@@ -196,6 +257,70 @@ function EvidenceModal({ prov, onClose }: { prov: Provenance | null; onClose: ()
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+const SEV_STYLES: Record<string, string> = {
+  critical: "bg-red-100 text-red-800",
+  high: "bg-red-100 text-red-800",
+  medium: "bg-amber-100 text-amber-800",
+  low: "bg-neutral-100 text-neutral-600",
+};
+
+// AI evidence review shown in place of the hash check while a REC is un-anchored.
+function AiEvidencePanel({ review, busy, onRerun }: { review: AiReview | null; busy: boolean; onRerun: () => void }) {
+  const findings = review?.findings ?? [];
+  const clean = review?.usedAI && findings.length === 0;
+
+  return (
+    <div className="mb-4 rounded-lg border border-neutral-200 bg-neutral-50/60 p-3">
+      <div className="flex items-center gap-2">
+        <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">AI</span>
+        <span className="text-sm font-medium text-neutral-700">
+          Not yet anchored — evidence reviewed by AI
+        </span>
+        <button
+          type="button"
+          onClick={onRerun}
+          disabled={busy}
+          className="ml-auto rounded px-2 py-0.5 text-xs text-neutral-500 transition hover:bg-neutral-200 disabled:opacity-50"
+        >
+          {busy ? "Reviewing…" : "Re-check"}
+        </button>
+      </div>
+
+      {busy && <p className="mt-2 text-xs text-neutral-400">Analysing backing readings with Groq…</p>}
+
+      {!busy && review && !review.usedAI && (
+        <p className="mt-2 text-xs text-neutral-500">{review.reason ?? "AI review unavailable."}</p>
+      )}
+
+      {!busy && clean && (
+        <p className="mt-2 flex items-center gap-2 text-xs text-green-700">
+          <StatusBadge value="issued" /> No anomalies found in the backing evidence
+          {review?.model && <span className="text-neutral-400">· {review.model}</span>}
+        </p>
+      )}
+
+      {!busy && findings.length > 0 && (
+        <ul className="mt-2 space-y-2">
+          {findings.map((f, i) => (
+            <li key={i} className="rounded-md border border-neutral-200 bg-white p-2">
+              <div className="flex items-center gap-2">
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${SEV_STYLES[f.severity] ?? SEV_STYLES.low}`}>
+                  {f.severity}
+                </span>
+                <span className="font-mono text-[10px] text-neutral-500">{f.ruleId}</span>
+                {typeof f.confidence === "number" && (
+                  <span className="ml-auto text-[10px] text-neutral-400">{Math.round(f.confidence * 100)}% conf.</span>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-neutral-700">{f.rationale}</p>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

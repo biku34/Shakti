@@ -59,6 +59,16 @@ export const env = {
   },
   groqModel: () => process.env.GROQ_MODEL || "openai/gpt-oss-20b",
 
+  // Pool of Google AI Studio (Gemini) keys for the feeder-recommendation layer,
+  // comma-separated for rate-limit failover. Empty → recommendations fall back
+  // to the deterministic rule-based ranking.
+  geminiApiKeys: (): string[] =>
+    (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "")
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean),
+  geminiModel: () => process.env.GEMINI_MODEL || "gemini-3.6-flash",
+
   // Transactional email (auditor report delivery). Left empty until the
   // Resend key is provisioned — the email route degrades gracefully.
   resendApiKey: () => process.env.RESEND_API_KEY || "",

@@ -20,7 +20,12 @@ export async function POST(req: Request) {
       meterCode: body.meterCode,
       energyMwh: body.energyMwh,
     });
-    await audit(session.userId, "rec.request", { type: "rec", id: result.recId });
+    // Fire-and-forget: the audit trail is non-critical to the response, so don't
+    // make the prosumer wait an extra Atlas round-trip for it. (Runs to
+    // completion on the persistent Node server.)
+    void audit(session.userId, "rec.request", { type: "rec", id: result.recId }).catch((e) =>
+      console.error("[audit] rec.request failed:", e),
+    );
     return ok(result);
   } catch (err) {
     return errorResponse(err);

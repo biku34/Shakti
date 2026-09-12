@@ -1,8 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
-import { Card, Stat, Table, Td, StatusBadge, Tabs, useApi } from "@/components/ui";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Btn, Card, Stat, Table, Td, StatusBadge, Tabs, useApi } from "@/components/ui";
+import { api } from "@/lib/client";
 import {
   classifyCongestion,
   utilisationPct,
@@ -44,6 +45,10 @@ type Settlement = {
   buyers: number;
   lastSettledAt: string | null;
 };
+
+type RecPriority = "critical" | "high" | "risky" | "low";
+type Recommendation = { feederCode: string; priority: RecPriority; action: string; rationale: string };
+type RecResult = { source: "ai" | "rules"; model?: string; reason?: string; recommendations: Recommendation[] };
 
 const TABS = [
   { id: "monitor", label: "Feeder Monitor" },
@@ -118,6 +123,44 @@ export default function UtilityDashboard() {
   }));
   const monitorList = [...realFeeders, ...zoneRows];
 
+  // Gemini-backed priority actions from the live congestion snapshot. Fetched
+  // once when the monitor first has data; refreshed on demand (e.g. after a
+  // load transfer on the map) rather than on every 4s poll.
+  const [recs, setRecs] = useState<RecResult | null>(null);
+  const [recsBusy, setRecsBusy] = useState(false);
+  const recsInit = useRef(false);
+
+  const fetchRecs = useCallback(async () => {
+    const feeders = monitorList.map((f) => ({
+      code: f.code,
+      name: f.name,
+      congestionLevel: levelOf(f),
+      loadPct: utilisationPct(f.availableSurplusKwh, f.capacityKw),
+      availableSurplusKwh: f.availableSurplusKwh ?? 0,
+      capacityKw: f.capacityKw,
+      meterCount: f.meterCount ?? 0,
+    }));
+    if (feeders.length === 0) return;
+    setRecsBusy(true);
+    try {
+      setRecs(await api<RecResult>("/api/utility/recommendations", { method: "POST", body: { feeders } }));
+    } catch (e) {
+      setRecs({ source: "rules", reason: e instanceof Error ? e.message : "failed", recommendations: [] });
+    } finally {
+      setRecsBusy(false);
+    }
+    // monitorList is rebuilt each render; fetchRecs is only *called* from a guarded
+    // effect / button, so we intentionally don't re-key it on that array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!recsInit.current && monitorList.length > 0) {
+      recsInit.current = true;
+      fetchRecs();
+    }
+  }, [monitorList, fetchRecs]);
+
   const totalCap = monitorList.reduce((s, f) => s + f.capacityKw, 0);
   const totalLoad = monitorList.reduce((s, f) => s + f.currentLoadKw, 0);
   const totalSurplus = monitorList.reduce((s, f) => s + (f.availableSurplusKwh ?? 0), 0);
@@ -154,7 +197,8 @@ export default function UtilityDashboard() {
                 <Stat label="Utilisation" value={totalCap ? ((totalSurplus / totalCap) * 100).toFixed(1) : "—"} unit="%" />
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-[1fr_4fr]">
+              <div className="grid gap-4 lg:grid-cols-[1fr_4fr] lg:items-start">
+                <div className="space-y-4">
                 <Card title="Congestion status">
                   <div className="flex flex-col gap-2 text-sm">
                     {CONGESTION_LEVELS.map((lvl) => (
@@ -169,6 +213,8 @@ export default function UtilityDashboard() {
                     Bands by available surplus vs capacity (kWh): &lt;70% low · 70–90% risky · 90–100% high · &gt;100% critical.
                   </p>
                 </Card>
+                <PriorityActions result={recs} busy={recsBusy} onRefresh={fetchRecs} />
+                </div>
 
                 <Card title="Feeders">
                   <Table head={["Code", "Name", "Meters", "Solar output kW", "Available surplus kWh", "Capacity kWh", "Load %", "Congestion"]} rows={monitorList.length}>
@@ -293,5 +339,60 @@ export default function UtilityDashboard() {
         </>
       )}
     </Tabs>
+  );
+}
+
+const PRIORITY_STYLE: Record<RecPriority, string> = {
+  critical: "bg-red-100 text-red-800",
+  high: "bg-red-50 text-red-700",
+  risky: "bg-amber-100 text-amber-800",
+  low: "bg-green-100 text-green-700",
+};
+
+// Compact "next 3 actions" strip below the tabs, driven by feeder congestion.
+function PriorityActions({ result, busy, onRefresh }: { result: RecResult | null; busy: boolean; onRefresh: () => void }) {
+  const recs = result?.recommendations ?? [];
+  return (
+    <Card
+      title="Priority actions"
+      actions={
+        <div className="flex items-center gap-2">
+          {result && (
+            <span
+              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                result.source === "ai" ? "bg-indigo-100 text-indigo-700" : "bg-neutral-100 text-neutral-500"
+              }`}
+            >
+              {result.source === "ai" ? `AI · ${result.model ?? "gemini"}` : "rules"}
+            </span>
+          )}
+          <Btn size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
+            {busy ? "Analysing…" : "Refresh"}
+          </Btn>
+        </div>
+      }
+    >
+      {busy && recs.length === 0 && <p className="text-sm text-neutral-400">Analysing feeder congestion…</p>}
+      {!busy && recs.length === 0 && <p className="text-sm text-neutral-400">No recommendations yet.</p>}
+      {recs.length > 0 && (
+        <ol className="space-y-2">
+          {recs.map((r, i) => (
+            <li key={i} className="rounded-lg border border-neutral-200 p-2.5">
+              <div className="flex items-center gap-2">
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${PRIORITY_STYLE[r.priority]}`}>
+                  {r.priority}
+                </span>
+                <span className="font-mono text-[11px] text-neutral-500">{r.feederCode}</span>
+              </div>
+              <p className="mt-1 text-[13px] font-medium leading-snug text-neutral-800">{r.action}</p>
+              {r.rationale && <p className="text-[11px] text-neutral-500">{r.rationale}</p>}
+            </li>
+          ))}
+        </ol>
+      )}
+      {result?.source === "rules" && result.reason && (
+        <p className="mt-2 text-[11px] text-neutral-400">Rule-based ranking · {result.reason}</p>
+      )}
+    </Card>
   );
 }

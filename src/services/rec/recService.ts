@@ -56,12 +56,18 @@ export async function requestIssuance(params: {
 
   const needKwh = params.energyMwh * KWH_PER_MWH;
 
-  // Verified readings with un-committed, un-backed export (oldest first).
-  const readings = await MeterReadingModel.find({
-    meterId: meter._id,
-    verified: true,
-    $expr: { $gt: ["$exportKwh", { $add: ["$committedExportKwh", "$recBackedKwh"] }] },
-  }).sort({ timestamp: 1 });
+  // The verified-readings query and the feeder lookup both hang off the meter
+  // and are independent, so run them together to save a round-trip to Atlas.
+  const [readings, feeder] = await Promise.all([
+    // Verified readings with un-committed, un-backed export (oldest first).
+    MeterReadingModel.find({
+      meterId: meter._id,
+      verified: true,
+      $expr: { $gt: ["$exportKwh", { $add: ["$committedExportKwh", "$recBackedKwh"] }] },
+    }).sort({ timestamp: 1 }),
+    MeterModel.db.model("Feeder").findById(meter.feederId),
+  ]);
+  const feederCode = (feeder as { code?: string })?.code ?? "GNR";
 
   const available = readings.reduce(
     (s, r) => s + (r.exportKwh - r.committedExportKwh - r.recBackedKwh),
@@ -70,9 +76,6 @@ export async function requestIssuance(params: {
   if (needKwh > available + 1e-6) {
     throw new Error(`Insufficient verified export: need ${needKwh} kWh, have ${available.toFixed(3)} kWh`);
   }
-
-  const feeder = await MeterModel.db.model("Feeder").findById(meter.feederId);
-  const feederCode = (feeder as { code?: string })?.code ?? "GNR";
 
   // Reserve backing readings (FR-6.6 / FR-6.7). Tracked so we can release them
   // if the REC can't be created — a failed request must not drain surplus.
@@ -86,14 +89,24 @@ export async function requestIssuance(params: {
     if (toBack <= 1e-6) break;
     const free = r.exportKwh - r.committedExportKwh - r.recBackedKwh;
     const take = Number(Math.min(free, toBack).toFixed(4));
-    r.recBackedKwh = Number((r.recBackedKwh + take).toFixed(4));
-    await r.save();
+    if (take <= 0) continue;
     reserved.push({ id: r._id, take });
     backingReadingIds.push(r._id);
     backingReadingKwh.push(take);
     if (r.timestamp < from) from = r.timestamp;
     if (r.timestamp > to) to = r.timestamp;
     toBack -= take;
+  }
+
+  // Reserve all backing readings in ONE bulk write instead of one save per
+  // reading (previously N sequential Atlas round-trips). $inc is atomic, so
+  // this is also safer against concurrent reservations than read-modify-save.
+  if (reserved.length) {
+    await MeterReadingModel.bulkWrite(
+      reserved.map((rr) => ({
+        updateOne: { filter: { _id: rr.id }, update: { $inc: { recBackedKwh: rr.take } } },
+      })),
+    );
   }
 
   try {
