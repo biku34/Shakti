@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { api } from "@/lib/client";
 import {
   Card, Stat, Table, Td, StatusBadge, Tabs, Btn, TxLink, inputClass, useApi, useToast,
@@ -38,6 +38,7 @@ const TABS = [
 ];
 
 const fmtTime = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const hhmm = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 
 export default function RegulatorDashboard() {
   const { show, node } = useToast();
@@ -46,6 +47,10 @@ export default function RegulatorDashboard() {
   const feeders = useApi<FeederCtl[]>("/api/regulator/feeders", 5000);
   const trades = useApi<TradeRow[]>("/api/reports/trades", 6000);
   const m = market.data;
+
+  const feederList = feeders.data ?? [];
+  const [selId, setSelId] = useState<string | null>(null);
+  const selectedFeeder = feederList.find((f) => f._id === selId) ?? feederList[0] ?? null;
 
   async function setStatus(id: string, status: string) {
     try { await api(`/api/fraud/alerts/${id}/status`, { method: "POST", body: { status } }); show(`Alert → ${status}`); alerts.refetch(); }
@@ -93,16 +98,22 @@ export default function RegulatorDashboard() {
               <div>
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-neutral-700">Feeder market controls</h3>
-                  <span className="text-xs text-neutral-400">Live clearing price · regulated price band · trading suspension</span>
+                  <span className="hidden text-xs text-neutral-400 sm:inline">Live clearing price · regulated price band · trading suspension</span>
                 </div>
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {(feeders.data ?? []).map((f) => (
-                    <FeederControlCard key={f._id} f={f} onDone={(msg) => { show(msg); feeders.refetch(); }} />
-                  ))}
-                  {feeders.data && feeders.data.length === 0 && (
-                    <p className="text-sm text-neutral-400">No feeders.</p>
-                  )}
-                </div>
+                {feederList.length === 0 ? (
+                  <Card><p className="text-sm text-neutral-400">No feeders.</p></Card>
+                ) : (
+                  <div className="grid gap-4 lg:grid-cols-[248px_1fr] lg:items-start">
+                    <FeederRail feeders={feederList} selectedId={selectedFeeder?._id ?? null} onSelect={setSelId} />
+                    {selectedFeeder && (
+                      <FeederTerminal
+                        key={selectedFeeder._id}
+                        f={selectedFeeder}
+                        onDone={(msg) => { show(msg); feeders.refetch(); }}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -212,8 +223,54 @@ function remainingLabel(untilIso: string | null): string | null {
   return mm ? `${h}h ${mm}m` : `${h}h`;
 }
 
-// A single feeder's live price + regulator controls (price band + suspension).
-function FeederControlCard({ f, onDone }: { f: FeederCtl; onDone: (msg: string) => void }) {
+const CONGESTION_DOT: Record<string, string> = {
+  low: "bg-green-500", risky: "bg-amber-500", high: "bg-red-500", critical: "bg-red-700",
+};
+
+// ─── Left rail: selectable feeder list (the "watchlist") ────────────────
+function FeederRail({
+  feeders, selectedId, onSelect,
+}: {
+  feeders: FeederCtl[]; selectedId: string | null; onSelect: (id: string) => void;
+}) {
+  return (
+    <aside className="self-start rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm lg:sticky lg:top-[68px]">
+      <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+        Feeders <span className="text-neutral-300">· {feeders.length}</span>
+      </div>
+      <div className="space-y-1">
+        {feeders.map((f) => {
+          const on = f._id === selectedId;
+          const dot = f.suspended ? "bg-red-500" : CONGESTION_DOT[f.congestionLevel] ?? "bg-neutral-300";
+          return (
+            <button
+              key={f._id}
+              onClick={() => onSelect(f._id)}
+              className={`w-full rounded-xl px-3 py-2.5 text-left transition ${
+                on ? "bg-neutral-900" : "hover:bg-neutral-50"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className={`font-mono text-[11px] ${on ? "text-neutral-400" : "text-neutral-400"}`}>{f.code}</span>
+                <span className={`h-2 w-2 flex-none rounded-full ${dot}`} title={f.suspended ? "Suspended" : f.congestionLevel} />
+              </div>
+              <div className={`mt-0.5 truncate text-sm font-medium ${on ? "text-white" : "text-neutral-800"}`}>{f.name}</div>
+              <div className={`mt-0.5 tabular-nums text-xs ${on ? "text-neutral-300" : "text-neutral-400"}`}>
+                {f.clearingPrice != null ? `${f.clearingPrice.toFixed(2)} cr/kWh` : "— cr/kWh"}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+// ─── Center terminal: price chart with regulated band + control toolbar ──
+function FeederTerminal({ f, onDone }: { f: FeederCtl; onDone: (msg: string) => void }) {
+  const hist = useApi<{ points: { t: string; price: number }[] }>(
+    `/api/feeders/${f._id}/price-history?points=80`, 5000,
+  );
   const [floor, setFloor] = useState(f.priceFloorPerKwh?.toString() ?? "");
   const [ceiling, setCeiling] = useState(f.priceCeilingPerKwh?.toString() ?? "");
   const [mins, setMins] = useState("30");
@@ -230,123 +287,198 @@ function FeederControlCard({ f, onDone }: { f: FeederCtl; onDone: (msg: string) 
     `${f.code} price band updated`,
   );
 
-  const lo = f.effectiveFloor;
-  const hi = f.effectiveCeiling;
+  const pts = hist.data?.points ?? [];
   const price = f.clearingPrice;
-  // Marker position of the clearing price within the regulated band (0–100%).
-  const pricePct =
-    price != null && hi > lo ? Math.min(100, Math.max(0, ((price - lo) / (hi - lo)) * 100)) : null;
   const resumesIn = remainingLabel(f.tradingSuspendedUntil);
 
   return (
-    <div className="flex flex-col rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm transition hover:shadow-md">
-      {/* Header: identity + trading state */}
-      <div className="flex items-start justify-between gap-3">
+    <section className="min-w-0 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      {/* Header: identity + live clearing price */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-[11px] font-medium uppercase tracking-wide text-neutral-400">{f.code}</span>
             <StatusBadge value={f.congestionLevel} />
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                f.suspended ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${f.suspended ? "bg-red-500" : "animate-pulse bg-green-500"}`} />
+              {f.suspended ? "Suspended" : "Trading"}
+            </span>
           </div>
-          <div className="mt-0.5 truncate text-[15px] font-semibold text-neutral-900">{f.name}</div>
+          <h3 className="mt-1 truncate text-lg font-semibold text-neutral-900">{f.name}</h3>
         </div>
-        <span
-          className={`inline-flex flex-none items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-            f.suspended ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"
-          }`}
-        >
-          <span className={`h-1.5 w-1.5 rounded-full ${f.suspended ? "bg-red-500" : "animate-pulse bg-green-500"}`} />
-          {f.suspended ? "Suspended" : "Trading"}
-        </span>
-      </div>
-
-      {/* Clearing price + band gauge */}
-      <div className="mt-4 rounded-xl border border-neutral-100 bg-neutral-50 p-3.5">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Clearing price</div>
-            <div className="mt-0.5 flex items-baseline gap-1">
-              <span className="text-2xl font-bold tabular-nums text-neutral-900">
-                {price != null ? price.toFixed(2) : "—"}
-              </span>
-              <span className="text-xs text-neutral-400">cr/kWh</span>
-            </div>
-          </div>
-          <div className="text-right">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Band</div>
-            <div className="mt-0.5 text-sm font-semibold tabular-nums text-neutral-700">{lo}–{hi}</div>
-          </div>
-        </div>
-        {/* Gauge: where the clearing price sits inside the regulated band */}
-        <div className="mt-3">
-          <div className="relative h-1.5 rounded-full bg-gradient-to-r from-neutral-200 via-neutral-200 to-neutral-200">
-            {pricePct != null && (
-              <span
-                className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-leaf shadow"
-                style={{ left: `${pricePct}%` }}
-                title={`${price?.toFixed(2)} cr/kWh`}
-              />
-            )}
-          </div>
-          <div className="mt-1 flex justify-between text-[10px] tabular-nums text-neutral-400">
-            <span>{lo}</span>
-            <span>{hi}</span>
+        <div className="text-right">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Clearing price</div>
+          <div className="mt-0.5 flex items-baseline justify-end gap-1">
+            <span className="text-3xl font-bold tabular-nums text-neutral-900">{price != null ? price.toFixed(2) : "—"}</span>
+            <span className="text-xs text-neutral-400">cr/kWh</span>
           </div>
         </div>
       </div>
 
-      {/* Regulated price band controls */}
+      {/* Price chart with the regulator's threshold band */}
       <div className="mt-4">
-        <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-neutral-400">Set price band · cr/kWh</div>
-        <div className="flex items-center gap-2">
-          <input
-            className={`${inputClass} px-2.5 py-1.5 text-center text-sm tabular-nums`}
-            type="number" step="0.1" min="0" placeholder="min"
-            value={floor} onChange={(e) => setFloor(e.target.value)}
-          />
-          <span className="text-neutral-300">–</span>
-          <input
-            className={`${inputClass} px-2.5 py-1.5 text-center text-sm tabular-nums`}
-            type="number" step="0.1" min="0" placeholder="max"
-            value={ceiling} onChange={(e) => setCeiling(e.target.value)}
-          />
-          <Btn size="sm" disabled={busy} onClick={saveBand}>Set</Btn>
-        </div>
-      </div>
-
-      {/* Trading suspension */}
-      <div className="mt-4 border-t border-neutral-100 pt-4">
-        {f.suspended ? (
-          <div className="flex items-center justify-between gap-2 rounded-lg bg-red-50 px-3 py-2">
-            <div className="flex items-center gap-2 text-xs">
-              <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-              <span className="font-semibold text-red-700">Suspended</span>
-              {resumesIn && <span className="text-red-500">· resumes in {resumesIn}</span>}
-            </div>
-            <Btn size="sm" variant="ghost" disabled={busy} onClick={() => post({ suspendMinutes: 0 }, `${f.code} trading resumed`)}>
-              Resume
-            </Btn>
+        {pts.length < 2 ? (
+          <div className="flex h-[300px] items-center justify-center rounded-xl border border-dashed border-neutral-200 text-sm text-neutral-400">
+            Waiting for price history on this feeder…
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-2">
-            <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5">
-              {SUSPEND_DURATIONS.map((d) => (
-                <button
-                  key={d.val}
-                  type="button"
-                  onClick={() => setMins(d.val)}
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                    mins === d.val ? "bg-white text-neutral-900 shadow-sm" : "text-neutral-500 hover:text-neutral-700"
-                  }`}
-                >
-                  {d.label}
-                </button>
-              ))}
-            </div>
-            <Btn size="sm" variant="danger" disabled={busy} onClick={() => post({ suspendMinutes: Number(mins) }, `${f.code} trading suspended for ${mins} min`)}>
-              Suspend
-            </Btn>
-          </div>
+          <PriceBandChart points={pts} floor={f.effectiveFloor} ceiling={f.effectiveCeiling} />
         )}
+      </div>
+
+      {/* Control toolbar */}
+      <div className="mt-5 flex flex-wrap items-end gap-x-8 gap-y-4 border-t border-neutral-100 pt-4">
+        <div>
+          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+            Regulated price band · cr/kWh
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              className={`${inputClass} w-24 px-2.5 py-1.5 text-center text-sm tabular-nums`}
+              type="number" step="0.1" min="0" placeholder="lower cap"
+              value={floor} onChange={(e) => setFloor(e.target.value)}
+            />
+            <span className="text-neutral-300">–</span>
+            <input
+              className={`${inputClass} w-24 px-2.5 py-1.5 text-center text-sm tabular-nums`}
+              type="number" step="0.1" min="0" placeholder="upper cap"
+              value={ceiling} onChange={(e) => setCeiling(e.target.value)}
+            />
+            <Btn size="sm" disabled={busy} onClick={saveBand}>Set band</Btn>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+            Trading suspension
+          </div>
+          {f.suspended ? (
+            <div className="flex items-center gap-3 rounded-lg bg-red-50 px-3 py-1.5">
+              <span className="flex items-center gap-1.5 text-xs">
+                <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                <span className="font-semibold text-red-700">Suspended</span>
+                {resumesIn && <span className="text-red-500">· resumes in {resumesIn}</span>}
+              </span>
+              <Btn size="sm" variant="ghost" disabled={busy} onClick={() => post({ suspendMinutes: 0 }, `${f.code} trading resumed`)}>
+                Resume
+              </Btn>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5">
+                {SUSPEND_DURATIONS.map((d) => (
+                  <button
+                    key={d.val}
+                    type="button"
+                    onClick={() => setMins(d.val)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                      mins === d.val ? "bg-white text-neutral-900 shadow-sm" : "text-neutral-500 hover:text-neutral-700"
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <Btn size="sm" variant="danger" disabled={busy} onClick={() => post({ suspendMinutes: Number(mins) }, `${f.code} trading suspended for ${mins} min`)}>
+                Suspend
+              </Btn>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Price chart with the regulator's threshold band overlaid ───────────
+function PriceBandChart({
+  points, floor, ceiling, height = 300,
+}: {
+  points: { t: string; price: number }[]; floor: number; ceiling: number; height?: number;
+}) {
+  const uid = useId().replace(/:/g, "");
+  const W = 760, H = height, padL = 40, padR = 54, padT = 16, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  const prices = points.map((p) => p.price);
+  const n = points.length;
+  let yMin = Math.min(floor, ...prices);
+  let yMax = Math.max(ceiling, ...prices);
+  const padY = (yMax - yMin) * 0.12 || 1;
+  yMin -= padY; yMax += padY;
+
+  const x = (i: number) => padL + (n <= 1 ? 0 : (i / (n - 1)) * plotW);
+  const y = (v: number) => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+  const line = prices.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const areaP = `${line} L${x(n - 1).toFixed(1)},${y(yMin).toFixed(1)} L${x(0).toFixed(1)},${y(yMin).toFixed(1)} Z`;
+  const last = prices[prices.length - 1];
+  const lastOut = last != null && (last < floor || last > ceiling);
+  const priceColor = "#4f46e5";
+
+  const gridVals = [0, 0.5, 1].map((f) => yMin + f * (yMax - yMin));
+  const labelIdx = n > 1 ? [0, Math.floor((n - 1) / 2), n - 1] : [0];
+
+  return (
+    <div className="w-full overflow-hidden rounded-xl border border-neutral-100 bg-neutral-50/60 p-2">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height }}>
+        <defs>
+          <linearGradient id={`pg-${uid}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={priceColor} stopOpacity="0.22" />
+            <stop offset="100%" stopColor={priceColor} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* Regulated band: shaded allowed zone between floor and ceiling */}
+        <rect
+          x={padL} width={plotW} y={y(ceiling)} height={Math.max(0, y(floor) - y(ceiling))}
+          fill="#16a34a" fillOpacity="0.07"
+        />
+        {[{ v: ceiling, label: "Ceiling" }, { v: floor, label: "Floor" }].map((b) => (
+          <g key={b.label}>
+            <line x1={padL} x2={padL + plotW} y1={y(b.v)} y2={y(b.v)} stroke="#16a34a" strokeWidth={1} strokeDasharray="4 3" strokeOpacity="0.5" />
+            <text x={padL + plotW + 6} y={y(b.v) + 3} fontSize="10" fill="#16a34a" fontWeight="600">{b.v}</text>
+            <text x={padL + plotW + 6} y={y(b.v) - 7} fontSize="8" fill="#9ca3af">{b.label}</text>
+          </g>
+        ))}
+
+        {/* faint gridlines + y labels */}
+        {gridVals.map((v, i) => (
+          <g key={i}>
+            <line x1={padL} x2={padL + plotW} y1={y(v)} y2={y(v)} stroke="#f0efed" strokeWidth={1} />
+            <text x={padL - 6} y={y(v) + 3} textAnchor="end" fontSize="10" fill="#a8a29e">{v.toFixed(1)}</text>
+          </g>
+        ))}
+
+        {/* price area + line */}
+        <path d={areaP} fill={`url(#pg-${uid})`} />
+        <path d={line} fill="none" stroke={priceColor} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        {last != null && (
+          <circle cx={x(n - 1)} cy={y(last)} r={4} fill={lastOut ? "#dc2626" : priceColor} stroke="#fff" strokeWidth={1.5} />
+        )}
+
+        {/* x time labels */}
+        {labelIdx.map((i) => (
+          <text key={i} x={x(i)} y={H - 8} textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"} fontSize="10" fill="#a8a29e">
+            {hhmm(points[i].t)}
+          </text>
+        ))}
+      </svg>
+
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-2 pb-1 text-xs">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: priceColor }} />
+          <span className="text-neutral-500">Clearing price</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-3 rounded-sm bg-green-500/20" />
+          <span className="text-neutral-500">Regulated band {floor}–{ceiling}</span>
+        </span>
+        {lastOut && <span className="font-medium text-red-500">⚠ Price outside band</span>}
       </div>
     </div>
   );
