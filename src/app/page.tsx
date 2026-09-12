@@ -75,8 +75,9 @@ export default function Home() {
             <span className="text-leaf">Literally.</span>
           </h1>
           <p className="mt-4 max-w-lg text-[15px] font-medium leading-relaxed text-blue-900/90">
-            One stack where metered rooftop-solar drives a peer-to-peer marketplace
-            and tamper-evident renewable energy certificates — from the meter to the chain.
+            Neighbours trade rooftop solar directly — every kilowatt metered, every green
+            certificate proven on-chain.{" "}
+            <span className="font-semibold text-blue-950">No utility markup. No greenwashing.</span>
           </p>
 
           <div className="mt-5 grid grid-cols-1 gap-3 [text-shadow:none] sm:grid-cols-2">
