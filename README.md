@@ -13,9 +13,9 @@ Built to the [SRS v1.0](#) — see requirement tags (FR-x, BC-x, SEC-x) in the c
 |---|---|
 | App (UI + API) | **Next.js 15** (App Router, TypeScript) |
 | Persistence | **MongoDB Atlas** (Mongoose) |
-| Trust layer | **Polygon Amoy** via **Alchemy** — anchoring only, **server-side** (no browser web3, DC-2) |
+| Trust layer | **Polygon Amoy** via **Alchemy** + **viem** — anchoring only, **server-side** (no browser web3, DC-2) |
 | Meter data | **In-process Node simulator** (control panel at `/smart`) emitting the §7.3 ingestion contract |
-| Intelligence | **Rule engine** (pricing §9.1, detection §9.2) behind swappable interfaces → Groq later |
+| Intelligence | **Rule engine** (pricing §9.1, detection §9.2) plus an optional **Groq** agentic fraud-review pass |
 
 ## Project layout
 
@@ -23,13 +23,13 @@ Built to the [SRS v1.0](#) — see requirement tags (FR-x, BC-x, SEC-x) in the c
 src/
   app/                 Next.js routes
     api/               all backend API routes (§11)
-    page.tsx           landing page (role dashboards are stubs)
+    page.tsx           landing page (role dashboards live under /dashboard)
   lib/                 env, db, auth/RBAC, api helpers, roles
   models/              Mongoose models — one per §5 collection
   services/
     trading/           pricing.ts (§9.1), matching.ts (§6.5)
     rec/               recService.ts (§6.6 lifecycle)
-    fraud/             detector.ts (§9.2 rules R-01..R-08)
+    fraud/             detector.ts (§9.2 rules R-01..R-08), groqDetector.ts (agentic AI review)
     blockchain/        adapter.ts (§8 anchor/verify), hash.ts (canonical sha256)
     audit.ts           append-only audit log
     services/
@@ -50,8 +50,12 @@ cp .env.example .env      # fill MONGODB_URI, AUTH_SECRET, SIM_SERVICE_TOKEN
 
 Defaults run fully offline: `BLOCKCHAIN_MOCK=true` records deterministic mock tx
 hashes (no Alchemy account or testnet funds needed). Set it to `false` and provide
-`ALCHEMY_API_KEY` + `ANCHOR_PRIVATE_KEY` to anchor for real (integration point marked
-in `src/services/blockchain/adapter.ts`).
+`ALCHEMY_API_KEY` + a funded `ANCHOR_PRIVATE_KEY` to anchor for real — `liveSubmit()`
+in `src/services/blockchain/adapter.ts` submits the content hash as calldata to
+Polygon Amoy via viem and waits for the receipt.
+
+Optionally set `GROQ_API_KEY` (or a comma-separated `GROQ_API_KEYS` pool) to enable
+the agentic AI fraud-review pass in the regulator dashboard.
 
 ### 2. Seed the demo data
 
@@ -88,7 +92,7 @@ Control API (same-origin): `GET /api/smart/state`, `POST /api/smart/meter`
 | Ingestion | `POST /api/ingest/readings` (service token) |
 | Trading | `GET /api/feeders/:id/orderbook` · `GET /api/feeders/:id/price` · `POST/DELETE /api/offers[/:id]` · `POST/DELETE /api/bids[/:id]` · `GET /api/trades/mine` |
 | REC | `POST /api/rec/request` · `GET /api/rec/issuance-queue` · `POST /api/rec/:id/{approve,transfer,retire,revoke}` · `GET /api/rec/:id/provenance` |
-| Fraud | `GET /api/fraud/alerts` · `POST /api/fraud/alerts/:id/status` · `POST /api/fraud/scan` |
+| Fraud | `GET /api/fraud/alerts` · `POST /api/fraud/alerts/:id/status` · `POST /api/fraud/scan` · `POST /api/fraud/ai-scan` (Groq agentic review) |
 | Oversight | `GET /api/utility/feeders` · `GET /api/reports/market` · `GET /api/audit/export` · `GET /api/verify/:refType/:refId` |
 
 ## Demo flow (Appendix C)
@@ -100,14 +104,13 @@ Control API (same-origin): `GET /api/smart/state`, `POST /api/smart/meter`
 5. Arm a fault from `/smart` (Appendix B) → fraud rules raise alerts.
 6. Regulator triages the alert and revokes the REC; auditor verifies provenance against the chain.
 
-## What's scaffolded vs. stubbed
+## Status
 
 **Wired & functional:** auth/RBAC, ingestion + validation, dynamic pricing, order book,
-matching & settlement, REC lifecycle, fraud rules R-01..R-08, mock/real anchoring, audit
-log, oversight reports, the simulator.
+matching & settlement, REC lifecycle, fraud rules R-01..R-08, the Groq agentic fraud
+review, **live Polygon Amoy anchoring** (viem + Alchemy) with mock fallback, all six role
+dashboards, audit log, oversight reports, the simulator.
 
-**Stubbed for you to build:** the role dashboard UIs (landing page is a placeholder), live
-polling/SSE widgets (NFR-P2), and the live Alchemy signing path.
-
----
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+**Remaining polish:** live polling/SSE widgets (NFR-P2) in place of the current interval
+refresh, and asynchronous anchor confirmation (anchoring currently waits for the receipt
+inline).
