@@ -40,5 +40,12 @@ export const env = {
     retailCeiling: () => num("PRICING_RETAIL_CEILING", 8.5),
   },
 
+  // Credits paid to the generator when a REC is issued (per MWh certified).
+  // 2500 cr/MWh = 2.5 cr/kWh — the green-attribute value, below the ~5.75
+  // energy clearing price since a REC certifies attributes, not the kWh itself.
+  rec: {
+    creditPerMwh: () => num("REC_CREDIT_PER_MWH", 2500),
+  },
+
   groqApiKey: () => process.env.GROQ_API_KEY || "",
 };

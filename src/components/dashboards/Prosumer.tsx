@@ -38,7 +38,7 @@ type MeterRow = {
 type MetersResp = { meters: MeterRow[]; totals: Totals };
 type Offer = { _id: string; quantityKwh: number; remainingKwh: number; askPricePerKwh: number; status: string; expiresAt: string };
 type Trade = { _id: string; quantityKwh: number; pricePerKwh: number; totalCredits: number; status: string; anchorTxHash: string | null; buyerId: string; sellerId: string; settledAt: string | null; createdAt: string | null };
-type Rec = { _id: string; serial: string; energyMwh: number; status: string; issueTxHash: string | null };
+type Rec = { _id: string; serial: string; energyMwh: number; status: string; issueTxHash: string | null; creditsAwarded: number };
 
 function NavIcon({ path }: { path: string }) {
   return (
@@ -57,7 +57,7 @@ const TABS = [
 
 export default function ProsumerDashboard({ feederId }: { feederId: string | null }) {
   const { show, node } = useToast();
-  const me = useApi<{ _id: string }>("/api/me", 30000);
+  const me = useApi<{ _id: string; creditBalance: number }>("/api/me", 5000);
   const meters = useApi<MetersResp>("/api/meters/mine", 5000);
   const trades = useApi<Trade[]>("/api/trades/mine", 5000);
   const recs = useApi<Rec[]>("/api/rec/mine", 5000);
@@ -175,17 +175,28 @@ export default function ProsumerDashboard({ feederId }: { feederId: string | nul
           )}
 
           {active === "recs" && (
-            <div className="space-y-6">
-              <RecRequestForm meters={meters.data?.meters ?? []} onDone={(m) => { show(m); recs.refetch(); meters.refetch(); }} />
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,320px)_1fr] lg:items-start">
+              <RecRequestForm
+                meters={meters.data?.meters ?? []}
+                availableSurplusKwh={t?.availableSurplusKwh ?? 0}
+                onDone={(m) => { show(m); recs.refetch(); meters.refetch(); me.refetch(); }}
+              />
               <Card title="My RECs">
-                <Table head={["Serial", "Energy MWh", "Status", "Issue anchor", ""]} rows={recs.data?.length ?? 0}>
+                <Table head={["Serial", "Energy kWh", "Status", "Credits", "Issue anchor", ""]} rows={recs.data?.length ?? 0}>
                   {recs.data?.map((r) => (
                     <tr key={r._id}>
                       <Td className="font-mono text-xs">{r.serial}</Td>
-                      <Td className="tabular-nums">{r.energyMwh}</Td>
+                      <Td className="tabular-nums">{(r.energyMwh * 1000).toFixed(1)}</Td>
                       <Td><StatusBadge value={r.status} /></Td>
+                      <Td className="tabular-nums">{r.creditsAwarded > 0 ? `+${r.creditsAwarded.toFixed(2)}` : "—"}</Td>
                       <Td><TxLink hash={r.issueTxHash} /></Td>
                       <Td>
+                        {r.status === "pending" && (
+                          <Btn size="sm" variant="danger" onClick={async () => {
+                            try { await api(`/api/rec/${r._id}/cancel`, { method: "POST" }); show("REC request cancelled — surplus released"); recs.refetch(); meters.refetch(); }
+                            catch (e) { show(e instanceof Error ? e.message : "Failed"); }
+                          }}>Cancel</Btn>
+                        )}
                         {["issued", "transferred"].includes(r.status) && (
                           <Btn size="sm" variant="ghost" onClick={async () => {
                             try { await api(`/api/rec/${r._id}/retire`, { method: "POST" }); show("REC retired"); recs.refetch(); }
@@ -215,36 +226,70 @@ function ChartWait() {
   );
 }
 
-function RecRequestForm({ meters, onDone }: { meters: MeterRow[]; onDone: (m: string) => void }) {
-  const [meterCode, setMeterCode] = useState(meters[0]?.code ?? "");
-  const [energyMwh, setEnergyMwh] = useState("0.001");
+// Credits paid per MWh certified — mirrors env.rec.creditPerMwh (server is
+// authoritative; this is only for the on-screen estimate).
+const REC_CREDIT_PER_MWH = 2500;
+const REC_CREDIT_PER_KWH = REC_CREDIT_PER_MWH / 1000; // 2.5 cr/kWh
+
+function RecRequestForm({
+  meters,
+  availableSurplusKwh,
+  onDone,
+}: {
+  meters: MeterRow[];
+  availableSurplusKwh: number;
+  onDone: (m: string) => void;
+}) {
+  const [energyKwh, setEnergyKwh] = useState("1");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const requestedKwh = Number(energyKwh) || 0;
+  const estCredits = requestedKwh * REC_CREDIT_PER_KWH;
+  // Client-side guard so the prosumer sees the shortfall before the server rejects it.
+  const shortfall = requestedKwh > availableSurplusKwh + 1e-6;
+  const invalid = requestedKwh <= 0 || shortfall;
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (invalid) return;
     setBusy(true); setError(null);
     try {
-      await api("/api/rec/request", { method: "POST", body: { meterCode: meterCode || meters[0]?.code, energyMwh: Number(energyMwh) } });
-      onDone("REC requested — pending certificate-body approval");
+      // The REC API/certificate work in MWh; convert the kWh input on the wire.
+      await api("/api/rec/request", { method: "POST", body: { meterCode: meters[0]?.code, energyMwh: requestedKwh / 1000 } });
+      onDone("REC requested — surplus held, pending certificate-body approval");
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(false); }
   }
 
   return (
     <Card title="Request a REC from verified generation">
-      <form onSubmit={submit} className="grid gap-4 sm:grid-cols-3 sm:items-end">
-        <Field label="Meter">
-          <select className={inputClass} value={meterCode} onChange={(e) => setMeterCode(e.target.value)}>
-            {meters.map((m) => <option key={m.id} value={m.code}>{m.code}</option>)}
-          </select>
+      <form onSubmit={submit} className="space-y-3">
+        <div className="rounded-lg border border-neutral-200 px-3 py-2">
+          <div className="text-xs text-neutral-400">Available surplus</div>
+          <div className="tabular-nums text-lg font-semibold text-leaf">{availableSurplusKwh.toFixed(2)} <span className="text-xs font-normal text-neutral-400">kWh</span></div>
+        </div>
+        <div className="rounded-lg border border-neutral-200 px-3 py-2">
+          <div className="text-xs text-neutral-400">You’ll earn (est.)</div>
+          <div className="tabular-nums text-lg font-semibold text-neutral-900">≈ {estCredits.toFixed(2)} <span className="text-xs font-normal text-neutral-400">cr</span></div>
+        </div>
+        <Field label="Energy (kWh)">
+          <input className={inputClass} type="number" step="0.1" min="0" value={energyKwh} onChange={(e) => setEnergyKwh(e.target.value)} required />
         </Field>
-        <Field label="Energy (MWh)">
-          <input className={inputClass} type="number" step="0.001" min="0" value={energyMwh} onChange={(e) => setEnergyMwh(e.target.value)} required />
-        </Field>
-        <Btn type="submit" disabled={busy}>{busy ? "Requesting…" : "Request REC"}</Btn>
+        <div className="[&>button]:w-full">
+          <Btn type="submit" disabled={busy || invalid}>{busy ? "Requesting…" : "Request REC"}</Btn>
+        </div>
       </form>
-      <p className="mt-2 text-xs text-neutral-400">1 MWh = 1000 kWh. Demo default 0.001 MWh (1 kWh) to match rooftop scale.</p>
+
+      <p className="mt-2 text-xs text-neutral-400">
+        Requesting {requestedKwh.toFixed(1)} kWh. On request the exact surplus is <b>held</b>; on approval it’s
+        deducted and you’re paid ≈{REC_CREDIT_PER_KWH.toFixed(1)} cr/kWh.
+      </p>
+      {shortfall && (
+        <p className="mt-1 text-xs text-red-600">
+          Not enough available surplus — you have {availableSurplusKwh.toFixed(2)} kWh but requested {requestedKwh.toFixed(1)} kWh.
+        </p>
+      )}
       <div className="mt-3"><ErrorNote error={error} /></div>
     </Card>
   );

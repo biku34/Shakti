@@ -21,6 +21,8 @@ const RecCertificateSchema = new Schema({
     default: "pending",
   },
   currentHolderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+  // Credits paid to the generator when this REC was issued (0 while pending).
+  creditsAwarded: { type: Number, default: 0 },
   issueTxHash: { type: String, default: null },
   contentHash: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },

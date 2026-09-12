@@ -5,10 +5,12 @@
  * another REC or be double-sold (§3.3 coherence, FR-6.6, FR-6.7).
  */
 import { connectDB } from "@/lib/db";
+import { env } from "@/lib/env";
 import { MeterModel } from "@/models/Meter";
 import { MeterReadingModel } from "@/models/MeterReading";
 import { RecCertificateModel } from "@/models/RecCertificate";
 import { RecTransactionModel } from "@/models/RecTransaction";
+import { UserModel } from "@/models/User";
 import { anchorRecord } from "@/services/blockchain/adapter";
 import { detectOnRec } from "@/services/fraud/detector";
 
@@ -90,7 +92,9 @@ export async function requestIssuance(params: {
 }
 
 /** Certificate body approves a pending REC → issued + anchored, then scanned (FR-6.2, FR-6.3). */
-export async function approveIssuance(recId: string): Promise<{ issueTxHash: string | null; alertsRaised: number }> {
+export async function approveIssuance(
+  recId: string,
+): Promise<{ issueTxHash: string | null; alertsRaised: number; creditsAwarded: number; generatorBalance: number | null }> {
   await connectDB();
   const rec = await RecCertificateModel.findById(recId);
   if (!rec) throw new Error("REC not found");
@@ -105,9 +109,22 @@ export async function approveIssuance(recId: string): Promise<{ issueTxHash: str
     backingReadingIds: rec.backingReadingIds.map(String),
   });
 
+  // Pay the generator for the certified green attribute. The backing surplus was
+  // already reserved at request time (recBackedKwh), so issuance just finalises
+  // it and credits the wallet.
+  const creditsAwarded = Number((rec.energyMwh * env.rec.creditPerMwh()).toFixed(4));
+  const generator = await UserModel.findById(rec.generatorId);
+  let generatorBalance: number | null = null;
+  if (generator) {
+    generator.creditBalance = Number((generator.creditBalance + creditsAwarded).toFixed(4));
+    await generator.save();
+    generatorBalance = generator.creditBalance;
+  }
+
   rec.status = "issued";
   rec.issueTxHash = anchor.txHash;
   rec.contentHash = anchor.contentHash;
+  rec.creditsAwarded = creditsAwarded;
   await rec.save();
 
   await RecTransactionModel.create({
@@ -120,7 +137,39 @@ export async function approveIssuance(recId: string): Promise<{ issueTxHash: str
 
   // FR-7.1: run REC-level fraud rules on issuance.
   const alertsRaised = await detectOnRec(recId);
-  return { issueTxHash: anchor.txHash, alertsRaised };
+  return { issueTxHash: anchor.txHash, alertsRaised, creditsAwarded, generatorBalance };
+}
+
+/**
+ * Cancel a *pending* REC request before it is issued. Only the generator can
+ * cancel, and only while pending — once issued it can no longer be cancelled.
+ * Releases the exact backing readings it reserved so the held surplus returns.
+ */
+export async function cancelRequest(recId: string, holderId: string): Promise<{ releasedKwh: number }> {
+  await connectDB();
+  const rec = await RecCertificateModel.findById(recId);
+  if (!rec) throw new Error("REC not found");
+  if (String(rec.generatorId) !== holderId) throw new Error("Only the generator can cancel this request");
+  if (rec.status !== "pending") throw new Error(`Cannot cancel a ${rec.status} REC — only pending requests can be cancelled`);
+
+  // Release the reserved backing so the surplus becomes available again.
+  const readings = await MeterReadingModel.find({ _id: { $in: rec.backingReadingIds } });
+  const releaseById = new Map<string, number>();
+  rec.backingReadingIds.forEach((id, i) => {
+    releaseById.set(String(id), rec.backingReadingKwh?.[i] ?? 0);
+  });
+  let releasedKwh = 0;
+  for (const r of readings) {
+    const release = releaseById.get(String(r._id)) ?? 0;
+    r.recBackedKwh = Number(Math.max(0, r.recBackedKwh - release).toFixed(4));
+    await r.save();
+    releasedKwh += release;
+  }
+
+  // A never-issued request leaves no certificate behind — remove it. The
+  // cancellation itself is recorded in the audit log by the API route.
+  await RecCertificateModel.deleteOne({ _id: rec._id });
+  return { releasedKwh: Number(releasedKwh.toFixed(4)) };
 }
 
 /** Transfer a REC to a new holder, anchored (FR-6.4). */
