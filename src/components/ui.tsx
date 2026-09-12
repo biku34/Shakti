@@ -119,6 +119,7 @@ const STATUS_TONE: Record<string, string> = {
   cancelled: "neutral",
   expired: "neutral",
   confirmed: "red",
+  flagged: "red",
   investigating: "yellow",
   dismissed: "neutral",
   low: "green",

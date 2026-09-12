@@ -5,6 +5,8 @@ import { requireRole } from "@/lib/auth";
 import { MeterModel } from "@/models/Meter";
 import { MeterReadingModel } from "@/models/MeterReading";
 import { EnergyOfferModel } from "@/models/EnergyOffer";
+import { FeederModel } from "@/models/Feeder";
+import { isTradingSuspended, priceBounds } from "@/services/trading/controls";
 import { audit } from "@/services/audit";
 
 const schema = z.object({
@@ -20,6 +22,15 @@ export async function POST(req: Request) {
     if (!session.feederId) return fail(400, "Prosumer is not bound to a feeder");
     await connectDB();
     const body = await parseBody(req, schema);
+
+    // Regulator market controls: no selling while trading is suspended, and the
+    // ask must sit inside the feeder's regulated price band.
+    const feeder = await FeederModel.findById(session.feederId);
+    if (isTradingSuspended(feeder)) return fail(403, "Trading is suspended on this feeder by the regulator");
+    const { floor, ceiling } = priceBounds(feeder);
+    if (body.askPricePerKwh < floor || body.askPricePerKwh > ceiling) {
+      return fail(400, `Ask must be within the regulated band ${floor}–${ceiling} cr/kWh`);
+    }
 
     const meters = await MeterModel.find({ ownerId: session.userId });
     const meterIds = meters.map((m) => m._id);

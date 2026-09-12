@@ -98,6 +98,13 @@ export async function computeAndSnapshotPrice(feederId: string): Promise<Pricing
 
   const output = strategy.price({ feederId, supplyKwh, demandKwh, congestionLevel });
 
+  // Re-clamp to the feeder's regulated band if the regulator set overrides.
+  const floor = feeder?.priceFloorPerKwh ?? output.fitFloor;
+  const ceiling = feeder?.priceCeilingPerKwh ?? output.retailCeiling;
+  output.fitFloor = floor;
+  output.retailCeiling = ceiling;
+  output.clearingPrice = Number(Math.min(ceiling, Math.max(floor, output.clearingPrice)).toFixed(4));
+
   await PricingSnapshotModel.create({
     feederId,
     supplyKwh,

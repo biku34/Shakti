@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  Card, Stat, Table, Td, StatusBadge, Tabs, Btn, TxLink, Field, inputClass, useApi, useToast,
+  Card, Stat, Table, Td, StatusBadge, Btn, TxLink, Field, inputClass, useApi, useToast,
 } from "@/components/ui";
 import { api } from "@/lib/client";
 
@@ -36,10 +36,11 @@ type Provenance = {
   verification: { verified: boolean; expected: string; actual: string; txHash: string | null };
 };
 
-const TABS = [
-  { id: "provenance", label: "REC Provenance Explorer" },
+const NAV = [
+  { id: "explorer", label: "REC Explorer" },
   { id: "verifier", label: "On-chain Verifier" },
-];
+] as const;
+type View = (typeof NAV)[number]["id"];
 
 const kwh = (mwh: number) => (mwh * 1000).toLocaleString(undefined, { maximumFractionDigits: 1 });
 const fmtDay = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
@@ -50,6 +51,7 @@ const STATUS_FILTERS = ["all", "issued", "pending", "retired"] as const;
 export default function AuditorDashboard() {
   const recs = useApi<Rec[]>("/api/rec", 8000);
   const [selected, setSelected] = useState<string | null>(null);
+  const [view, setView] = useState<View>("explorer");
   const [showExport, setShowExport] = useState(false);
   const prov = useApi<Provenance>(selected ? `/api/rec/${selected}/provenance` : null);
   const { show, node } = useToast();
@@ -83,28 +85,47 @@ export default function AuditorDashboard() {
         <Stat label="Revoked" value={recs.data ? revoked : "—"} accent="red" />
       </div>
 
-      <Tabs tabs={TABS}>
-        {(active) => (
-          <>
-            {active === "provenance" && (
-              <div className="grid gap-6 lg:grid-cols-[340px_1fr] lg:items-start">
-                <Registry
-                  recs={list}
-                  loading={recs.loading && !recs.data}
-                  selected={selected}
-                  onSelect={setSelected}
-                />
-                <div className="min-w-0">
-                  {!selected && <DetailPlaceholder count={list.length} />}
-                  {selected && prov.loading && !prov.data && <DetailSkeleton />}
-                  {selected && prov.data && <RecDetail prov={prov.data} />}
-                </div>
-              </div>
-            )}
-            {active === "verifier" && <Verifier />}
-          </>
-        )}
-      </Tabs>
+      {/* ── 25% rail (nav + REC list) · 75% content ─────────────────── */}
+      <div className="grid gap-6 lg:grid-cols-[1fr_3fr] lg:items-start">
+        <div className="space-y-4 lg:sticky lg:top-[68px]">
+          <nav className="flex gap-1 rounded-xl border border-neutral-200 bg-white p-1.5 shadow-sm lg:flex-col">
+            {NAV.map((n) => {
+              const on = view === n.id;
+              return (
+                <button
+                  key={n.id}
+                  onClick={() => setView(n.id)}
+                  className={`flex-1 rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
+                    on ? "bg-leaf/10 text-leaf ring-1 ring-leaf/20" : "text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800"
+                  }`}
+                >
+                  {n.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          {view === "explorer" && (
+            <Registry
+              recs={list}
+              loading={recs.loading && !recs.data}
+              selected={selected}
+              onSelect={setSelected}
+            />
+          )}
+        </div>
+
+        <div className="min-w-0">
+          {view === "verifier" && <Verifier />}
+          {view === "explorer" && (
+            <>
+              {!selected && <DetailPlaceholder count={list.length} />}
+              {selected && prov.loading && !prov.data && <DetailSkeleton />}
+              {selected && prov.data && <RecDetail prov={prov.data} />}
+            </>
+          )}
+        </div>
+      </div>
 
       {showExport && (
         <ExportModal recs={list} onClose={() => setShowExport(false)} toast={show} />
@@ -218,66 +239,37 @@ function RecDetail({ prov }: { prov: Provenance }) {
   const backedKwh = (c.backingReadingKwh ?? []).reduce((s, n) => s + n, 0);
 
   return (
-    <div className="space-y-6">
-      {/* Trust panel — verification headline (left) + chain of custody (right) */}
-      <Card>
-        <div className="grid gap-5 md:grid-cols-2 md:gap-6">
-          <div className={`flex items-start gap-4 rounded-xl border p-4 ${v.verified ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
-            <span className={`flex h-11 w-11 flex-none items-center justify-center rounded-full text-white ${v.verified ? "bg-leaf" : "bg-red-600"}`}>
-              {v.verified ? <IconShieldCheck /> : <IconShieldAlert />}
-            </span>
-            <div className="min-w-0">
-              <div className={`text-sm font-semibold ${v.verified ? "text-green-800" : "text-red-800"}`}>
-                {v.verified ? "Verified on-chain" : "Tamper detected — hash mismatch"}
-              </div>
-              <div className={`mt-0.5 text-xs ${v.verified ? "text-green-700" : "text-red-700"}`}>
-                {v.verified
-                  ? "The current record hashes exactly to its blockchain anchor."
-                  : "The current record does not match the hash anchored at issuance."}
-              </div>
-              <div className="mt-2"><TxLink hash={v.txHash} /></div>
-            </div>
-          </div>
+    <Card title="Certificate" actions={<StatusBadge value={c.status} />}>
+      <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="font-mono text-base font-semibold text-neutral-900">{c.serial}</span>
+        <span className="text-sm text-neutral-400">
+          {kwh(c.energyMwh)} kWh · issued {fmtDay(c.createdAt)}
+        </span>
+      </div>
 
-          <div className="md:border-l md:border-neutral-100 md:pl-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h4 className="text-sm font-semibold text-neutral-700">Chain of custody</h4>
-              <span className="text-xs text-neutral-400">{prov.transactions.length} event{prov.transactions.length === 1 ? "" : "s"}</span>
-            </div>
-            {prov.transactions.length === 0 ? (
-              <p className="py-4 text-center text-sm text-neutral-400">No lifecycle events recorded.</p>
-            ) : (
-              <ol className="relative ml-2 space-y-5 border-l border-neutral-200 pl-6">
-                {prov.transactions.map((t) => (
-                  <li key={t._id} className="relative">
-                    <span
-                      className="absolute -left-[31px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full ring-4 ring-white"
-                      style={{ backgroundColor: ACTION_COLOR[t.action] ?? "#a3a3a3" }}
-                    />
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <span className="text-sm font-medium capitalize text-neutral-800">{ACTION_LABEL[t.action] ?? t.action}</span>
-                      <TxLink hash={t.anchorTxHash} />
-                      <span className="text-xs text-neutral-400">{new Date(t.timestamp).toLocaleString()}</span>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
+      {/* Verification headline */}
+      <div className={`flex items-center gap-4 rounded-xl border p-4 ${v.verified ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+        <span className={`flex h-11 w-11 flex-none items-center justify-center rounded-full text-white ${v.verified ? "bg-leaf" : "bg-red-600"}`}>
+          {v.verified ? <IconShieldCheck /> : <IconShieldAlert />}
+        </span>
+        <div className="min-w-0">
+          <div className={`text-sm font-semibold ${v.verified ? "text-green-800" : "text-red-800"}`}>
+            {v.verified ? "Verified on-chain" : "Tamper detected — hash mismatch"}
+          </div>
+          <div className={`text-xs ${v.verified ? "text-green-700" : "text-red-700"}`}>
+            {v.verified
+              ? "The current record hashes exactly to its blockchain anchor."
+              : "The current record does not match the hash anchored at issuance."}
           </div>
         </div>
-      </Card>
+        {c.status === "issued" && (
+          <div className="ml-auto flex-none"><OnChainProof cert={c} verification={v} /></div>
+        )}
+      </div>
 
-      <Card
-        title="Certificate"
-        actions={<StatusBadge value={c.status} />}
-      >
-        <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <span className="font-mono text-base font-semibold text-neutral-900">{c.serial}</span>
-          <span className="text-sm text-neutral-400">
-            {kwh(c.energyMwh)} kWh · issued {fmtDay(c.createdAt)}
-          </span>
-        </div>
-        <dl className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2">
+      {/* Details (left) + chain of custody (right), one integrated section */}
+      <div className="mt-5 grid gap-6 lg:grid-cols-3">
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:col-span-2">
           <Detail label="Generator" value={prov.parties.generator?.name ?? c.generatorId} sub={prov.parties.generator?.email} />
           <Detail label="Current holder" value={prov.parties.currentHolder?.name ?? c.currentHolderId} sub={prov.parties.currentHolder?.role} />
           <Detail label="Meter" value={prov.parties.meter?.code ?? c.meterId} sub={prov.parties.meter ? `${prov.parties.meter.solarCapacityKw} kW solar` : undefined} />
@@ -294,27 +286,95 @@ function RecDetail({ prov }: { prov: Provenance }) {
           />
         </dl>
 
-        {(c.issueTxHash || c.contentHash) && (
-          <details className="mt-5 border-t border-neutral-100 pt-4">
-            <summary className="cursor-pointer text-xs font-medium text-neutral-500 hover:text-neutral-700">
-              On-chain proof
-            </summary>
-            <div className="mt-3 space-y-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="text-neutral-400">Issue tx</span>
-                <TxLink hash={c.issueTxHash} />
+        <div className="border-t border-neutral-100 pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+          <div className="mb-4 flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-neutral-700">Chain of custody</h4>
+            <span className="text-xs text-neutral-400">{prov.transactions.length} event{prov.transactions.length === 1 ? "" : "s"}</span>
+          </div>
+          {prov.transactions.length === 0 ? (
+            <p className="py-4 text-center text-sm text-neutral-400">No lifecycle events recorded.</p>
+          ) : (
+            <ol className="relative ml-2 space-y-5 border-l border-neutral-200 pl-6">
+              {prov.transactions.map((t) => (
+                <li key={t._id} className="relative">
+                  <span
+                    className="absolute -left-[31px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full ring-4 ring-white"
+                    style={{ backgroundColor: ACTION_COLOR[t.action] ?? "#a3a3a3" }}
+                  />
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="text-sm font-medium capitalize text-neutral-800">{ACTION_LABEL[t.action] ?? t.action}</span>
+                    <TxLink hash={t.anchorTxHash} />
+                    <span className="text-xs text-neutral-400">{new Date(t.timestamp).toLocaleString()}</span>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// On-chain proof — opens the re-hash comparison + anchor references in a modal,
+// triggered from a button on the verification banner.
+function OnChainProof({
+  cert, verification,
+}: {
+  cert: Provenance["certificate"];
+  verification: Provenance["verification"];
+}) {
+  const [open, setOpen] = useState(false);
+  const v = verification;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-neutral-700 shadow-sm backdrop-blur transition hover:bg-white"
+      >
+        <IconLink /> On-chain proof
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 p-4" onClick={() => setOpen(false)}>
+          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4 border-b border-neutral-100 px-6 py-4">
+              <div>
+                <h3 className="text-sm font-semibold text-neutral-800">On-chain proof</h3>
+                <p className="mt-0.5 text-xs text-neutral-500">The record re-hashed and compared to its blockchain anchor.</p>
               </div>
-              <div className="break-all font-mono text-neutral-400">
-                <span className="text-neutral-400">content hash</span> {c.contentHash || "—"}
+              <button onClick={() => setOpen(false)} className="rounded p-1 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700" aria-label="Close"><IconClose /></button>
+            </div>
+
+            <div className="space-y-4 px-6 py-5">
+              <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${v.verified ? "bg-green-50 text-green-800" : "bg-red-50 text-red-700"}`}>
+                <span className={`flex h-6 w-6 items-center justify-center rounded-full text-white ${v.verified ? "bg-leaf" : "bg-red-600"}`}>{v.verified ? <IconCheck /> : <IconShieldAlert />}</span>
+                <span className="font-medium">{v.verified ? "Recomputed hash matches the anchor" : "Recomputed hash does not match the anchor"}</span>
               </div>
-              <div className="break-all font-mono text-neutral-400">
-                <span className="text-neutral-400">recomputed&nbsp;&nbsp;</span> {v.actual || "—"}
+
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-medium uppercase tracking-wide text-neutral-400">Issue tx</span>
+                <TxLink hash={cert.issueTxHash} />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-medium uppercase tracking-wide text-neutral-400">Anchor tx</span>
+                <TxLink hash={v.txHash} />
+              </div>
+
+              <div>
+                <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">Anchored hash (expected)</div>
+                <code className="block break-all rounded-lg bg-neutral-50 p-2 font-mono text-xs text-neutral-600">{v.expected || cert.contentHash || "—"}</code>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">Recomputed hash (actual)</div>
+                <code className={`block break-all rounded-lg p-2 font-mono text-xs ${v.verified ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{v.actual || "—"}</code>
               </div>
             </div>
-          </details>
-        )}
-      </Card>
-    </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -647,4 +707,7 @@ function IconShieldAlert() {
 }
 function IconExpand() {
   return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>;
+}
+function IconLink() {
+  return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1" /></svg>;
 }

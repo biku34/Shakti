@@ -11,6 +11,11 @@ const FeederSchema = new Schema({
   currentLoadKw: { type: Number, default: 0 },
   congestionLevel: { type: String, enum: ["low", "risky", "high", "critical"], default: "low" },
   connectedMeters: [{ type: Schema.Types.ObjectId, ref: "Meter" }],
+  // Regulator controls (null → fall back to the platform-wide env defaults).
+  priceFloorPerKwh: { type: Number, default: null },
+  priceCeilingPerKwh: { type: Number, default: null },
+  // Trading is halted on this feeder until this instant (null / past → active).
+  tradingSuspendedUntil: { type: Date, default: null },
 });
 
 export type Feeder = InferSchemaType<typeof FeederSchema>;

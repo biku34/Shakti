@@ -11,6 +11,10 @@ const TradeSchema = new Schema({
   totalCredits: { type: Number, required: true },
   status: { type: String, enum: ["matched", "settled", "failed"], default: "matched" },
   anchorTxHash: { type: String, default: null },
+  // Regulator compliance hold: a settled trade can be flagged for review.
+  flagged: { type: Boolean, default: false },
+  flagReason: { type: String, default: null },
+  flaggedAt: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now },
   settledAt: { type: Date, default: null },
 });

@@ -62,7 +62,7 @@ export default function LoginPage() {
       <div className="w-full max-w-4xl">
         <div className="mb-6 text-center">
           <Link href="/" className="text-sm font-medium text-leaf hover:underline">
-            ← Renewable Energy Intelligence
+            ← Shakti
           </Link>
         </div>
 

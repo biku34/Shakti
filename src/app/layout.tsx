@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Renewable Energy Intelligence Platform",
+  title: "Shakti — Renewable Energy Intelligence",
   description: "P2P Energy Trading Marketplace + REC Fraud Detection",
 };
 

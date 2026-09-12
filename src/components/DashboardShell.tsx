@@ -56,7 +56,7 @@ export default function DashboardShell({ role, feederId }: { role: Role; feederI
           <div className="flex items-center gap-3">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-leaf text-white shadow-sm">⚡</span>
             <div className="leading-tight">
-              <div className="text-sm font-bold tracking-tight">REIP</div>
+              <div className="text-sm font-bold tracking-tight">Shakti</div>
               <div className="text-[11px] text-neutral-400">Renewable Energy Intelligence</div>
             </div>
             {meterCode && (

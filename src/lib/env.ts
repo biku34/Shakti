@@ -48,4 +48,9 @@ export const env = {
   },
 
   groqApiKey: () => process.env.GROQ_API_KEY || "",
+
+  // Transactional email (auditor report delivery). Left empty until the
+  // Resend key is provisioned — the email route degrades gracefully.
+  resendApiKey: () => process.env.RESEND_API_KEY || "",
+  resendFrom: () => process.env.RESEND_FROM || "Shakti Audit <onboarding@resend.dev>",
 };

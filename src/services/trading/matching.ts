@@ -15,7 +15,9 @@ import { UserModel } from "@/models/User";
 import { EnergyOfferModel } from "@/models/EnergyOffer";
 import { EnergyBidModel } from "@/models/EnergyBid";
 import { TradeModel } from "@/models/Trade";
+import { FeederModel } from "@/models/Feeder";
 import { anchorRecord } from "@/services/blockchain/adapter";
+import { isTradingSuspended } from "@/services/trading/controls";
 import { audit } from "@/services/audit";
 
 const EPS = 1e-6;
@@ -31,6 +33,10 @@ export async function matchBid(bidId: string): Promise<MatchResult> {
   if (!bid || !["open", "partial"].includes(bid.status)) {
     return { trades: [], filledKwh: 0 };
   }
+
+  // Respect a regulator trading suspension on this feeder — no settlement.
+  const feeder = await FeederModel.findById(bid.feederId);
+  if (isTradingSuspended(feeder)) return { trades: [], filledKwh: 0 };
 
   // FR-5.1: cheapest compatible offers first, same feeder.
   const offers = await EnergyOfferModel.find({
