@@ -64,6 +64,19 @@ export default function RegulatorDashboard() {
     try { const r = await api<{ alertsRaised: number }>("/api/fraud/scan", { method: "POST" }); show(`Scan complete — ${r.alertsRaised} new alert(s)`); alerts.refetch(); }
     catch (e) { show(e instanceof Error ? e.message : "Failed"); }
   }
+  const [aiBusy, setAiBusy] = useState(false);
+  async function aiScan() {
+    setAiBusy(true);
+    try {
+      const r = await api<{ usedAI: boolean; reason?: string; model?: string; findings: number; alertsRaised: number }>("/api/fraud/ai-scan", { method: "POST" });
+      if (!r.usedAI) show(r.reason ?? "AI review not configured");
+      else if (r.alertsRaised > 0) show(`AI review — ${r.alertsRaised} new alert(s) raised`);
+      else if (r.findings > 0) show(`AI review — ${r.findings} finding(s), all already flagged`);
+      else show("AI review — no new anomalies detected");
+      alerts.refetch();
+    } catch (e) { show(e instanceof Error ? e.message : "AI review failed"); }
+    finally { setAiBusy(false); }
+  }
   async function flagTrade(t: TradeRow) {
     try {
       if (!t.flagged) {
@@ -125,6 +138,8 @@ export default function RegulatorDashboard() {
               onStatus={setStatus}
               onRevoke={revoke}
               onScan={scan}
+              onAiScan={aiScan}
+              aiBusy={aiBusy}
             />
           )}
 
@@ -387,12 +402,14 @@ function evidencePairs(ev: Record<string, unknown>): [string, string][] {
 }
 
 function AlertsPanel({
-  alerts, loading, onStatus, onRevoke, onScan,
+  alerts, loading, onStatus, onRevoke, onScan, onAiScan, aiBusy,
 }: {
   alerts: Alert[]; loading: boolean;
   onStatus: (id: string, status: string) => void;
   onRevoke: (subjectId: string) => void;
   onScan: () => void;
+  onAiScan: () => void;
+  aiBusy: boolean;
 }) {
   const [filter, setFilter] = useState<(typeof ALERT_FILTERS)[number]>("all");
 
@@ -422,7 +439,12 @@ function AlertsPanel({
             </span>
           ))}
         </div>
-        <Btn size="sm" onClick={onScan}><IconRadar /><span className="ml-1.5">Run full scan</span></Btn>
+        <div className="flex items-center gap-2">
+          <Btn size="sm" variant="ghost" disabled={aiBusy} onClick={onAiScan}>
+            <span className="mr-1">✨</span>{aiBusy ? "Reviewing…" : "AI review"}
+          </Btn>
+          <Btn size="sm" onClick={onScan}><IconRadar /><span className="ml-1.5">Run full scan</span></Btn>
+        </div>
       </div>
 
       {/* Status filter */}

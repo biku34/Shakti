@@ -48,6 +48,16 @@ export const env = {
   },
 
   groqApiKey: () => process.env.GROQ_API_KEY || "",
+  // Pool of Groq keys (comma-separated) for rate-limit failover; falls back to
+  // the single GROQ_API_KEY. Empty when the agentic layer is not configured.
+  groqApiKeys: (): string[] => {
+    const pool = (process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY || "")
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean);
+    return pool;
+  },
+  groqModel: () => process.env.GROQ_MODEL || "openai/gpt-oss-20b",
 
   // Transactional email (auditor report delivery). Left empty until the
   // Resend key is provisioned — the email route degrades gracefully.
