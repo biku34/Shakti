@@ -1,6 +1,7 @@
 /**
  * Anomaly detection (§6.7, §9.2) behind a swappable interface (AG-1..AG-3).
- * `RuleAnomalyDetector` implements rules R-01..R-08; a `GroqAgenticDetector`
+ * `RuleAnomalyDetector` implements rules R-01..R-08 plus R-09 (a robust
+ * statistical outlier test, see `./statistical`); a `GroqAgenticDetector`
  * can be registered later via `setAnomalyDetector` with identical I/O (FR-7.8).
  */
 import { connectDB } from "@/lib/db";
@@ -8,6 +9,7 @@ import { MeterModel } from "@/models/Meter";
 import { MeterReadingModel } from "@/models/MeterReading";
 import { RecCertificateModel } from "@/models/RecCertificate";
 import { FraudAlertModel, type FraudAlert } from "@/models/FraudAlert";
+import { detectStatisticalAnomaly } from "./statistical";
 
 export type Finding = Pick<
   FraudAlert,
@@ -79,6 +81,9 @@ export class RuleAnomalyDetector implements IAnomalyDetector {
         });
       }
     }
+
+    // R-09: robust statistical outlier vs the meter's own learned baseline.
+    findings.push(...(await detectStatisticalAnomaly(readingId)));
 
     return findings;
   }

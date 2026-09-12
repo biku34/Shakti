@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "@/lib/client";
 import { useApi } from "@/components/ui";
 import type { Role } from "@/lib/roles";
 
@@ -44,13 +43,19 @@ export default function DashboardShell({ role, feederId }: { role: Role; feederI
   async function logout() {
     if (signingOut) return;
     setSigningOut(true);
+    // Fire the logout as a `keepalive` request and navigate away without
+    // awaiting it. On data-heavy dashboards (regulator, auditor, utility) the
+    // live polls saturate the browser's ~6-connection-per-origin pool; awaiting
+    // the POST would queue it behind those in-flight requests and make sign-out
+    // hang for seconds. `keepalive` lets the request complete through the page
+    // unload, so the cookie is still cleared while sign-out stays instant for
+    // every role. The hard navigation itself tears down the client router cache
+    // and stops the polls.
     try {
-      await api("/api/auth/logout", { method: "POST" });
+      void fetch("/api/auth/logout", { method: "POST", keepalive: true });
     } catch {
       // Navigate away regardless so the user is never left stuck signed-in.
     }
-    // Hard navigation clears the client router cache, stops the live polls, and
-    // re-runs the server auth guard — so sign-out is immediate and clean.
     window.location.href = "/login";
   }
 

@@ -29,7 +29,7 @@ src/
   services/
     trading/           pricing.ts (§9.1), matching.ts (§6.5)
     rec/               recService.ts (§6.6 lifecycle)
-    fraud/             detector.ts (§9.2 rules R-01..R-08), groqDetector.ts (agentic AI review)
+    fraud/             detector.ts (§9.2 rules R-01..R-08), statistical.ts (R-09 robust z-score anomaly), groqDetector.ts (agentic AI review)
     blockchain/        adapter.ts (§8 anchor/verify), hash.ts (canonical sha256)
     audit.ts           append-only audit log
     services/
@@ -107,7 +107,8 @@ Control API (same-origin): `GET /api/smart/state`, `POST /api/smart/meter`
 ## Status
 
 **Wired & functional:** auth/RBAC, ingestion + validation, dynamic pricing, order book,
-matching & settlement, REC lifecycle, fraud rules R-01..R-08, the Groq agentic fraud
+matching & settlement, REC lifecycle, fraud rules R-01..R-08, the R-09 statistical
+anomaly detector (robust modified z-score per meter baseline), the Groq agentic fraud
 review, **live Polygon Amoy anchoring** (viem + Alchemy) with mock fallback, all six role
 dashboards, audit log, oversight reports, the simulator.
 

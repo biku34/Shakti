@@ -91,6 +91,38 @@ export async function verifyRecord(
   };
 }
 
+export type OnChainTx = {
+  found: boolean;
+  calldata: string | null;
+  from: string | null;
+  to: string | null;
+  blockNumber: number | null;
+};
+
+/**
+ * Read an anchor transaction back from the chain (FR-8.4) so a verifier can
+ * confirm the on-chain calldata still carries the anchored hash. Returns
+ * `found: false` in mock mode or if the tx can't be fetched (never throws).
+ */
+export async function readOnChainAnchor(txHash: string): Promise<OnChainTx> {
+  const miss: OnChainTx = { found: false, calldata: null, from: null, to: null, blockNumber: null };
+  if (env.blockchainMock() || !env.alchemyApiKey() || !txHash) return miss;
+  try {
+    const { chain, rpcUrl } = resolveChain();
+    const client = createPublicClient({ chain, transport: http(rpcUrl) });
+    const tx = await client.getTransaction({ hash: txHash as Hex });
+    return {
+      found: true,
+      calldata: tx.input,
+      from: tx.from,
+      to: tx.to ?? null,
+      blockNumber: tx.blockNumber != null ? Number(tx.blockNumber) : null,
+    };
+  } catch {
+    return miss;
+  }
+}
+
 // ─── MOCK submission ────────────────────────────────────────────────
 function mockSubmit(hash: string): { txHash: string; blockNumber: number } {
   const txHash = "0x" + createHash("sha256").update("tx:" + hash + Date.now()).digest("hex");

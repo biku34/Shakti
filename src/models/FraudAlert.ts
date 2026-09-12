@@ -8,6 +8,7 @@ export const FRAUD_TYPES = [
   "volume_mismatch",
   "velocity",
   "cross_feeder",
+  "statistical_anomaly",
 ] as const;
 
 const FraudAlertSchema = new Schema({

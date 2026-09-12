@@ -180,7 +180,7 @@ export function Field({
 }
 
 export const inputClass =
-  "w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm focus:border-leaf focus:outline-none focus:ring-1 focus:ring-leaf";
+  "w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-leaf focus:outline-none focus:ring-1 focus:ring-leaf";
 
 export function Table({
   head,

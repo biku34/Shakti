@@ -612,18 +612,44 @@ function ExportModal({ recs, onClose, toast }: { recs: Rec[]; onClose: () => voi
   );
 }
 
-// ─── On-chain verifier ──────────────────────────────────────────────────
+// ─── On-chain verifier (by transaction hash) ────────────────────────────
+type RecSubject = {
+  kind: "rec"; id: string; serial: string; energyMwh: number; status: string; createdAt: string;
+  generationWindow: { from: string; to: string }; creditsAwarded: number;
+  generator: string | null; currentHolder: string | null;
+  meter: { code: string; solarCapacityKw: number } | null; feeder: { name: string; code: string } | null;
+  issueTxHash: string | null;
+};
+type TradeSubject = {
+  kind: "trade"; id: string; quantityKwh: number; pricePerKwh: number; totalCredits: number;
+  status: string; settledAt: string | null; createdAt: string;
+  seller: string | null; buyer: string | null; feeder: { name: string; code: string } | null;
+};
+type VerifyResult = {
+  txHash: string;
+  refType: "rec" | "trade" | "rec_txn";
+  refId: string;
+  network: string;
+  anchorStatus: string;
+  contentHash: string;
+  anchoredAt: string;
+  hashMatch: { verified: boolean; expected: string; actual: string } | null;
+  onChain: { found: boolean; calldataMatches: boolean | null; from: string | null; to: string | null; blockNumber: number | null };
+  subject: RecSubject | TradeSubject | null;
+};
+
+const shortAddr = (a: string | null) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "—");
+
 function Verifier() {
-  const [refType, setRefType] = useState("rec");
-  const [refId, setRefId] = useState("");
-  const [result, setResult] = useState<{ verified: boolean; expected: string; actual: string; txHash: string | null } | null>(null);
+  const [tx, setTx] = useState("");
+  const [result, setResult] = useState<VerifyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function run() {
     setError(null); setResult(null); setBusy(true);
     try {
-      const res = await fetch(`/api/verify/${refType}/${refId}`);
+      const res = await fetch(`/api/verify/tx/${encodeURIComponent(tx.trim())}`);
       const json = await res.json();
       if (!res.ok || json.ok === false) throw new Error(json.error || "Failed");
       setResult(json.data);
@@ -631,41 +657,145 @@ function Verifier() {
     finally { setBusy(false); }
   }
 
+  // Verdict: prefer the re-hash check; otherwise fall back to the on-chain calldata match.
+  const verified = result
+    ? (result.hashMatch ? result.hashMatch.verified : !!(result.onChain.found && result.onChain.calldataMatches))
+    : false;
+
   return (
     <Card title="On-chain verifier">
-      <p className="mb-4 text-sm text-neutral-500">Re-hash any record by ID and compare it byte-for-byte against its blockchain anchor.</p>
+      <p className="mb-4 text-sm text-neutral-500">
+        Paste an anchor transaction hash — we locate the record it anchored, re-hash it,
+        cross-check the on-chain calldata, and show the certificate.
+      </p>
       <div className="flex flex-wrap items-end gap-3">
-        <Field label="Ref type">
-          <select className={inputClass} value={refType} onChange={(e) => setRefType(e.target.value)}>
-            <option value="rec">rec</option>
-            <option value="trade">trade</option>
-          </select>
-        </Field>
         <label className="block flex-1">
-          <span className="mb-1 block text-xs font-medium text-neutral-500">Record ID</span>
-          <input className={`${inputClass} font-mono text-xs`} placeholder="ObjectId" value={refId} onChange={(e) => setRefId(e.target.value)} onKeyDown={(e) => e.key === "Enter" && refId && run()} />
+          <span className="mb-1 block text-xs font-medium text-neutral-500">Transaction hash</span>
+          <input
+            className={`${inputClass} font-mono text-xs`}
+            placeholder="0x…"
+            value={tx}
+            onChange={(e) => setTx(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && tx.trim() && run()}
+          />
         </label>
-        <Btn onClick={run} disabled={!refId || busy}>{busy ? "Verifying…" : "Verify"}</Btn>
+        <Btn onClick={run} disabled={!tx.trim() || busy}>{busy ? "Verifying…" : "Verify"}</Btn>
       </div>
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+
       {result && (
-        <div className={`mt-4 rounded-xl border p-4 ${result.verified ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
-          <div className="flex items-center gap-3">
-            <span className={`flex h-9 w-9 flex-none items-center justify-center rounded-full text-white ${result.verified ? "bg-leaf" : "bg-red-600"}`}>
-              {result.verified ? <IconShieldCheck /> : <IconShieldAlert />}
+        <div className="mt-4 space-y-4">
+          {/* Verdict */}
+          <div className={`flex items-center gap-3 rounded-xl border p-4 ${verified ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+            <span className={`flex h-9 w-9 flex-none items-center justify-center rounded-full text-white ${verified ? "bg-leaf" : "bg-red-600"}`}>
+              {verified ? <IconShieldCheck /> : <IconShieldAlert />}
             </span>
-            <span className={`text-sm font-semibold ${result.verified ? "text-green-800" : "text-red-800"}`}>
-              {result.verified ? "Verified — hash matches on-chain anchor" : "Mismatch — record does not match its anchor"}
-            </span>
-            <span className="ml-auto"><TxLink hash={result.txHash} /></span>
+            <div className="min-w-0">
+              <div className={`text-sm font-semibold ${verified ? "text-green-800" : "text-red-800"}`}>
+                {verified ? "Verified against the blockchain anchor" : "Not verified — hash mismatch"}
+              </div>
+              <div className={`text-xs ${verified ? "text-green-700" : "text-red-700"}`}>
+                {result.hashMatch
+                  ? (verified ? "The record hashes exactly to what was anchored." : "The record no longer matches the anchored hash.")
+                  : (result.onChain.found ? "Confirmed via on-chain calldata." : "Anchor found; hash not re-derivable for this ref type.")}
+              </div>
+            </div>
+            <span className="ml-auto flex-none"><TxLink hash={result.txHash} /></span>
           </div>
-          <div className="mt-3 space-y-1 break-all font-mono text-xs text-neutral-500">
-            <div>expected: {result.expected || "—"}</div>
-            <div>actual&nbsp;&nbsp;: {result.actual || "—"}</div>
+
+          {/* On-chain proof */}
+          <div className="grid gap-3 rounded-xl border border-neutral-200 p-4 sm:grid-cols-2">
+            <ProofRow label="Network" value={result.network} />
+            <ProofRow label="Block" value={result.onChain.blockNumber ? `#${result.onChain.blockNumber}` : "—"} />
+            <ProofRow
+              label="On-chain calldata"
+              value={
+                result.onChain.found
+                  ? (result.onChain.calldataMatches ? "Matches anchored hash ✓" : "Does not match ✗")
+                  : "Mock anchor (offline mode)"
+              }
+            />
+            <ProofRow label="Anchor status" value={result.anchorStatus} />
+            {result.onChain.found && (
+              <ProofRow label="From → To" value={`${shortAddr(result.onChain.from)} → ${shortAddr(result.onChain.to)}`} mono />
+            )}
+            <ProofRow label="Ref" value={`${result.refType} · ${result.refId.slice(0, 8)}…`} mono />
+          </div>
+
+          {/* Certificate / record it anchored */}
+          {result.subject?.kind === "rec" && <RecSubjectCard s={result.subject} />}
+          {result.subject?.kind === "trade" && <TradeSubjectCard s={result.subject} />}
+
+          {/* Hash comparison */}
+          <div className="space-y-2">
+            <div>
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-neutral-400">Anchored hash</div>
+              <code className="block break-all rounded-lg bg-neutral-50 p-2 font-mono text-xs text-neutral-600">{result.contentHash || "—"}</code>
+            </div>
+            {result.hashMatch && (
+              <div>
+                <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-neutral-400">Recomputed hash</div>
+                <code className={`block break-all rounded-lg p-2 font-mono text-xs ${result.hashMatch.verified ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{result.hashMatch.actual || "—"}</code>
+              </div>
+            )}
           </div>
         </div>
       )}
     </Card>
+  );
+}
+
+function ProofRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs font-medium uppercase tracking-wide text-neutral-400">{label}</span>
+      <span className={`text-neutral-800 ${mono ? "font-mono text-xs" : "text-sm"}`}>{value}</span>
+    </div>
+  );
+}
+
+function RecSubjectCard({ s }: { s: RecSubject }) {
+  return (
+    <div className="rounded-xl border border-neutral-200 p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-leaf/10 text-leaf"><IconShield /></span>
+        <span className="font-mono text-base font-semibold text-neutral-900">{s.serial}</span>
+        <StatusBadge value={s.status} />
+        <span className="ml-auto text-sm text-neutral-400">{kwh(s.energyMwh)} kWh</span>
+      </div>
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+        <Detail label="Generator" value={s.generator ?? "—"} />
+        <Detail label="Current holder" value={s.currentHolder ?? "—"} />
+        <Detail label="Meter" value={s.meter?.code ?? "—"} sub={s.meter ? `${s.meter.solarCapacityKw} kW solar` : undefined} />
+        <Detail label="Feeder" value={s.feeder ? `${s.feeder.name} (${s.feeder.code})` : "—"} />
+        <Detail label="Energy certified" value={`${kwh(s.energyMwh)} kWh`} sub={`${s.energyMwh} MWh`} />
+        <Detail label="Credits awarded" value={(s.creditsAwarded ?? 0).toLocaleString()} />
+        <Detail label="Generation window" value={`${fmtDateTime(s.generationWindow.from)} → ${fmtDateTime(s.generationWindow.to)}`} />
+        <Detail label="Issued" value={fmtDay(s.createdAt)} />
+      </dl>
+    </div>
+  );
+}
+
+function TradeSubjectCard({ s }: { s: TradeSubject }) {
+  return (
+    <div className="rounded-xl border border-neutral-200 p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-grid/10 text-grid"><IconLink /></span>
+        <span className="text-base font-semibold text-neutral-900">Energy trade</span>
+        <StatusBadge value={s.status} />
+        <span className="ml-auto text-sm text-neutral-400">{s.quantityKwh} kWh</span>
+      </div>
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+        <Detail label="Seller" value={s.seller ?? "—"} />
+        <Detail label="Buyer" value={s.buyer ?? "—"} />
+        <Detail label="Quantity" value={`${s.quantityKwh} kWh`} />
+        <Detail label="Price" value={`${s.pricePerKwh} cr/kWh`} />
+        <Detail label="Total credits" value={`${s.totalCredits.toLocaleString()} cr`} />
+        <Detail label="Feeder" value={s.feeder ? `${s.feeder.name} (${s.feeder.code})` : "—"} />
+        <Detail label="Settled" value={s.settledAt ? fmtDateTime(s.settledAt) : "—"} />
+      </dl>
+    </div>
   );
 }
 
